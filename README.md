@@ -78,7 +78,7 @@ Given our objective to accelerate GRPO training, we focus on leveraging this pri
 
 ## Completions Pruning Policy Optimization
 
-![alt text](./asset/CPPO.png)
+![image](./asset/CPPO.png)
 
 The pipeline of the CPPO algorithm is as follows:
 
@@ -117,7 +117,7 @@ $$
 
 
 ## Parallel Processing through Dynamic Completion Allocation
-![alt text](image.png)
+![alt text](./asset/allocation.png)
 
 A single device can process a maximum of $B$ question per batch, with each question generating $G$ candidate completions. After pruning, the total number of retained completions per device reduces to $B \times k$, resulting in suboptimal GPU utilization and underleveraged parallel computing capabilities.
 
