@@ -57,6 +57,7 @@ The pipeline of the CPPO algorithm is as follows:
 
 (1) The old-policy model samples a group of completions for each question.
 (2) The reward function computes the reward for each completion via :
+
 $$r_i = R_{format}(o_i) + R_{accuracy}(o_i)$$,
 
 where 
