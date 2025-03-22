@@ -23,7 +23,7 @@ The number of completions impacts model accuracy **sublinearly** yet increases t
 
 The derivative of the GRPO's policy objective function in Eq.(1) with respect to the model parameters $\theta$ as:
 
-![](./asset/derivative.png)
+![](./asset/Derivative.png)
 
  **(1) Advantage-weighted probability ratio term**  directly ties the contribution of each completion to its advantage. This term incentivizes the policy to prioritize actions with higher rewards, as the advantage function quantifies how much a given action improves expected returns relative to the baseline. By amplifying high-advantage completions and suppressing low-advantage ones, this term guides the policy optimization toward reward-aligned reasoning patterns.
 %
