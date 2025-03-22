@@ -105,38 +105,33 @@ To address this inefficiency, we dynamically allocate pruned completions from ad
 | Qwen2.5-1.5B-Instruct      | GRPO    |16 |0%| |   |
 | Qwen2.5-1.5B-Instruct      | GRPO    | 8 |0% |  |   |
 | Qwen2.5-1.5B-Instruct      | CPPO    |16 |50%|    |   |
+
+**We will release more results about models of different scales and other datasets next week.**
+
 ## To Reproduce
 
 ### 1. Prepare the environment according to [Open R1](https://github.com/huggingface/open-r1).
+```bash
+conda create -n cppo python=3.11
+conda activate cppo
+pip install vllm==0.7.2
+pip install setuptools
+pip install flash-attn --no-build-isolation
+pip install -e ".[dev]"
+```
 ### 2. Training:
+You need two GPU with 80G memory to reproduce our results.
 #### GRPO
 ```bash
-accelerate launch --config_file recipes/accelerate_configs/zero3.yaml \
-    --num_processes=1  src/open_r1/grpo_gsm.py \
-    --config recipes/gsm8k/config_simple_rl.yaml \
-    --output_dir=/data/CPPO \
-    --save_strategy='best' \
-    --num_generations=8 --metric='smallest' --pruning=0.5  --filling 
+sh scripts/GRPO.sh
 ```
 #### CPPO
 ```bash
-accelerate launch  --config_file recipes/accelerate_configs/zero3.yaml \
-    --num_processes=1  src/open_r1/grpo_gsm.py \
-    --config recipes/gsm8k/config_simple_rl.yaml \
-    --output_dir=/data/GRPO \
-    --save_strategy='best' \
-    --num_generations=16 --num_iterations=2 2>&1 
+sh scripts/CPPO.sh
 ```
 ### 3. Evaluation:
 ```bash
-accelerate launch --config_file recipes/accelerate_configs/zero3.yaml \
-    --num_processes=1  src/open_r1/eval_gsm.py \
-    --config recipes/gsm8k/eval.yaml \
-    --output_dir=/data/eval \
-    --per_device_eval_batch_size=16 \
-    --max_completion_length=1024 \
-    --model_name_or_path=MODEL_CKPT_PATH \
-    --num_generations=16 --num_train_epochs=0
+sh scripts/Eval.sh
 ```
 
 
