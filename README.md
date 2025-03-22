@@ -1,1 +1,1 @@
-# CPPO
+# CPPO: Accelerating the Training of Group Relative Policy Optimization-Based Reasoning Models
