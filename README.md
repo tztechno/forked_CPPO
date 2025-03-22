@@ -1,6 +1,8 @@
 # CPPO: Accelerating the Training of Group Relative Policy Optimization-Based Reasoning Models
 
 
+## Note: Our paper will be released within the next one to two weeks, accomplished by more comprehensive results.
+
 ## Abstract
 We introduce **Completion Pruning Policy Optimization (CPPO)** to accelerate the training of reasoning models based on Group Relative Policy Optimization (GRPO). GRPO, while effective, incurs high training costs due to the need for sampling multiple completions for each question. Our analysis reveals that the number of completions impacts model accuracy sublinearly yet increases training time multiplicatively, and not all completions contribute equally to policy training---their contribution depends on their relative advantage. To address these issues, we propose CPPO, which prunes completions with low absolute advantages, significantly reducing the number needed for gradient calculation and updates. Additionally, we introduce a dynamic completion allocation strategy to maximize GPU utilization by incorporating additional questions, further enhancing training efficiency. Experiments on GSM8K datasets and Qwen2.5-1.5b-Instruct models demonstrate that CPPO accelerates reasoning model training by nearly **$$1.60 \times$$** while maintaining the same performance as the original GRPO.
 
@@ -26,9 +28,9 @@ The derivative of the GRPO's policy objective function in Eq.(1) with respect to
 ![](./asset/Derivative.png)
 
  **(1) Advantage-weighted probability ratio term**  directly ties the contribution of each completion to its advantage. This term incentivizes the policy to prioritize actions with higher rewards, as the advantage function quantifies how much a given action improves expected returns relative to the baseline. By amplifying high-advantage completions and suppressing low-advantage ones, this term guides the policy optimization toward reward-aligned reasoning patterns.
-%
+
 **(2) KL divergence constraint term**  enforces stability by penalizing deviations from the reference model $\pi_{ref}$. However, this constraint is not inherently designed to shape the policy's reasoning patterns but rather ensures smooth updates during training.
-%
+
 **(3) Policy model gradient term** represents the gradient of the log-probability of the policy's predicted action with respect to the model parameters $\theta$.
 
 
