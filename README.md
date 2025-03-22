@@ -2,23 +2,14 @@
 
 
 ## Abstract
-We introduces **Completion Pruning Policy Optimization (CPPO)** to accelerate the training of reasoning models based on Group Relative Policy Optimization (GRPO). GRPO, while effective, incurs high training costs due to the need for sampling multiple completions for each question. Our analysis reveals that the number of completions impacts model accuracy sublinearly yet increases training time multiplicatively, and not all completions contribute equally to policy training---their contribution depends on their relative advantage. To address these issues, we propose CPPO, which prunes completions with low absolute advantages, significantly reducing the number needed for gradient calculation and updates. Additionally, we introduce a dynamic completion allocation strategy to maximize GPU utilization by incorporating additional questions, further enhancing training efficiency. Experiments on GSM8K datasets and Qwen2.5-1.5b-Instruct models demonstrate that CPPO accelerates reasoning model training by nearly **1.60$\times$** while maintaining the same performance as the original GRPO.
+We introduce **Completion Pruning Policy Optimization (CPPO)** to accelerate the training of reasoning models based on Group Relative Policy Optimization (GRPO). GRPO, while effective, incurs high training costs due to the need for sampling multiple completions for each question. Our analysis reveals that the number of completions impacts model accuracy sublinearly yet increases training time multiplicatively, and not all completions contribute equally to policy training---their contribution depends on their relative advantage. To address these issues, we propose CPPO, which prunes completions with low absolute advantages, significantly reducing the number needed for gradient calculation and updates. Additionally, we introduce a dynamic completion allocation strategy to maximize GPU utilization by incorporating additional questions, further enhancing training efficiency. Experiments on GSM8K datasets and Qwen2.5-1.5b-Instruct models demonstrate that CPPO accelerates reasoning model training by nearly **$$1.60 \times$$** while maintaining the same performance as the original GRPO.
 
 ## Motivation
 
 GRPO's policy objective function:
-$$
-    \mathcal{J}_{GRPO}(\theta) = 
-    \mathbb{E}_{q \sim P(Q), \{o_i\}_{i=1}^G \sim \pi_{\theta_{old}}(o|q)}
-    \Bigg\{  
-    \frac{1}{G} \sum_{i=1}^G \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} 
-    \Big\{ \min \Big[
-    \frac{\pi_\theta(o_{i,t} | q, o_{i,<t})}{\pi_{\theta_{old}}(o_{i,t} | q, o_{i,<t})} A_{i},  \notag \\
-    \text{clip} \big( \frac{\pi_\theta(o_{i,t} | q, o_{i,<t})}{\pi_{\theta_{old}}(o_{i,t} | q, o_{i,<t})}, 1 - \epsilon, 1 + \epsilon \big) A_{i} \Big] 
-    - \beta \mathbb{D}_{KL}\left[\pi_{\theta} || \pi_{ref}\right] \Big\} \Bigg\}. \tag{1}
-$$
 
-The GRPO algorithm's training overhead scales linearly with the number of completions sampled per question. This is due to the need to compute predicted probabilities for the policy, reference, and old policy models across all completions. For instance, in DeepSeek-Math, using 64 completions requires 192 forward pass per question (64$\times$3), incurring significant computational costs. This raises two critical questions: 
+![](./asset/grpo.png)
+The GRPO algorithm's training overhead scales linearly with the number of completions sampled per question. This is due to the need to compute predicted probabilities for the policy, reference, and old policy models across all completions. For instance, in DeepSeek-Math, using 64 completions requires 192 forward pass per question ($64 \times 3$), incurring significant computational costs. This raises two critical questions: 
 
 **(1) How does the number of completions affect policy model accuracy? Does increasing completions always enhance performance?**
 
@@ -31,23 +22,8 @@ The number of completions impacts model accuracy **sublinearly** yet increases t
 **Not all completions contribute equally to policy training**---their contribution depends on their relative **advantage**.
 
 The derivative of the GRPO's policy objective function in Eq.(1) with respect to the model parameters $\theta$ as:
-$$
-\begin{aligned}
- \nabla_{\theta} J_{GRPO}(\theta)=&\,\mathbb{E}_{\left[q \sim P(Q), \{o_{i}\}_{i=1}^{G} \sim \pi_{\theta_{old}}(O|q)\right]} \Bigg\{ \frac{1}{G} \sum_{i=1}^{G} \frac{1}{\left|o_{i}\right|} \sum_{t=1}^{\left|o_{i}\right|} \Bigg[ \nabla_{\theta}\left(\frac{\pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)}{\pi_{\theta_{old}}\left(o_{i, t} | q, o_{i,<t}\right)} A_i\right) \\
-&\quad\quad\quad\quad - \beta\left(\nabla_{\theta} \frac{\pi_{r e f}\left(o_{i, t} | q, o_{i,<t}\right)}{\pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)}-\nabla_{\theta} \log \frac{\pi_{r e f}\left(o_{i, t} | q, o_{i,<t}\right)}{\pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)}\right) \Bigg]\Bigg\} \\
-%
-=&\mathbb{E}_{\left[q \sim P(Q), \{o_{i}\}_{i=1}^{G} \sim \pi_{\theta_{old}}(O|q)\right]} \Bigg\{ \frac{1}{G} \sum_{i=1}^{G} \frac{1}{\left|o_{i}\right|} \sum_{t=1}^{\left|o_{i}\right|} \Bigg[ \frac{\nabla_{\theta} \pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)}{\pi_{\theta_{old}\left(o_{i, t} | q, o_{i,<t}\right)}}A_i \\
-&+ \beta\left(\frac{\pi_{r e f}\left(o_{i, t} | q, o_{i,<t}\right)\nabla_{\theta} \pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)}{\pi_{\theta}^{2}\left(o_{i, t} | q, o_{i,<t}\right)} - \frac{\nabla_{\theta} \pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)}{\pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)}\right) \Bigg] \Bigg\} \\
-%
-=&\mathbb{E}_{\left[q \sim P(Q), \{o_{i}\}_{i=1}^{G} \sim \pi_{\theta_{old}}(O|q)\right]} \Bigg\{  \frac{1}{G} \sum_{i=1}^{G} \frac{1}{\left|o_{i}\right|} \sum_{t=1}^{\left|o_{i}\right|} \Bigg[ \frac{\pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)}{\pi_{\theta_{old}}\left(o_{i, t} | q, o_{i,<t}\right)} A_i  \\ 
-&\quad\quad\quad\quad\quad\quad\quad + \beta\left(\frac{\pi_{r e f}\left(o_{i, t} | q, o_{i,<t}\right)}{\pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)} - 1\right)\Bigg] \frac{\nabla_{\theta} \pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)}{\pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)}\Bigg\} \\
-%
-=&\mathbb{E}_{\left[q \sim P(Q), \{o_{i}\}_{i=1}^{G} \sim \pi_{\theta_{old}}(O|q)\right]} \Bigg\{ \frac{1}{G} \sum_{i=1}^{G} \frac{1}{\left|o_{i}\right|} \sum_{t=1}^{\left|o_{i}\right|} \Bigg[  \underbrace{\frac{\pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)}{\pi_{\theta_{old}}\left(o_{i, t} | q, o_{i,<t}\right)} A_i}_{
-\textit{Advantage-weighted probability ratio}} \\ 
-&\quad\quad\quad\quad\quad + \underbrace{\beta\left(\frac{\pi_{r e f}\left(o_{i, t} | q, o_{i,<t}\right)}{\pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)}-1\right)}_{\textit{KL divergence constraint}}   \Bigg] \underbrace{\nabla_{\theta} \log \pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)}_{
-\textit{Policy model gradient}}\Bigg\}.
-\end{aligned} \tag{2}
-$$
+
+![](./asset/Derivative.png)
 
  **(1) Advantage-weighted probability ratio term**  directly ties the contribution of each completion to its advantage. This term incentivizes the policy to prioritize actions with higher rewards, as the advantage function quantifies how much a given action improves expected returns relative to the baseline. By amplifying high-advantage completions and suppressing low-advantage ones, this term guides the policy optimization toward reward-aligned reasoning patterns.
 %
@@ -58,10 +34,7 @@ $$
 
 Recent work by [Hu et al.](https://github.com/Open-Reasoner-Zero/Open-Reasoner-Zero,) demonstrates that removing the KL divergence constraint does not impair the trained model's reasoning ability, as the policy's core reasoning patterns are primarily driven by the reward-aligned advantage term. Motivated by this insight, we approximate the policy objective's derivative as:
 
-$$\begin{aligned}
-\nabla_{\theta} J_{GRPO}(\theta) &  \approx  \, \mathbb{E}_{\left[q \sim P(Q), \{o_{i}\}_{i=1}^{G} \sim \pi_{\theta_{old}}(O|q)\right]} \\
-&\Bigg\{ \frac{1}{G} \sum_{i=1}^{G} \frac{1}{\left|o_{i}\right|} \sum_{t=1}^{\left|o_{i}\right|} \Big[ \underbrace{\frac{\pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)}{\pi_{\theta_{old}}\left(o_{i, t} | q, o_{i,<t}\right)} }_{\substack{\textit{Probability ratio} \\ \textit{(Post-forward)}}}\cdot \underbrace{A_i}_{\substack{\textit{Advantage}\\\textit{(Prior-forward)}}}  \Big] \underbrace{\nabla_{\theta} \log \pi_{\theta}\left(o_{i, t} | q, o_{i,<t}\right)}_{\substack{\textit{Policy model gradient}\\ \textit{(Post-forward)}}} \Bigg\}, \tag{3}
-\end{aligned}$$
+![alt text](./asset/formula3.png)
 
 effectively decoupling the optimization from KL regularization while retaining the reward-driven learning signal.
 
@@ -84,7 +57,7 @@ The pipeline of the CPPO algorithm is as follows:
 
 (1) The old-policy model samples a group of completions for each question.
 (2) The reward function computes the reward for each completion via :
-$$ r_i = R_{format}(o_i) + R_{accuracy}(o_i), $$
+$$r_i = R_{format}(o_i) + R_{accuracy}(o_i)$$,
 
 where 
 
