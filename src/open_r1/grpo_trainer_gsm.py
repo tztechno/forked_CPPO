@@ -776,7 +776,7 @@ class GRPOTrainer(Trainer):
                     prompts_text = [ x for num in prompts_text for x in [ num ] * self.repeat ]
             else:
                 if self.args.allocation:
-                    self.repeat = int(1 / self.args.pruning)
+                    self.repeat = int(1 / (1-self.args.pruning))
                     prompt_ids = torch.repeat_interleave(prompt_ids, repeats=self.repeat,dim=0)
                     prompt_mask = torch.repeat_interleave(prompt_mask, repeats=self.repeat,dim=0)
                     prompts = [ x for num in prompts for x in [ num ] * self.repeat ] 
