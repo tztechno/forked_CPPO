@@ -411,7 +411,7 @@ class GRPOTrainer(Trainer):
         self.max_prompt_length = args.max_prompt_length
         self.max_completion_length = args.max_completion_length  # = |o_i| in the GRPO paper
         if args.allocation:
-            self.num_generations = int(args.num_generations * args.pruning) # = G in the GRPO paper
+            self.num_generations = int(args.num_generations * (1 - args.pruning)) # = G in the GRPO paper
         else:
             self.num_generations = args.num_generations  # = G in the GRPO paper
         self.use_vllm = args.use_vllm
@@ -753,7 +753,7 @@ class GRPOTrainer(Trainer):
                         temperature=self.args.temperature,
                         max_tokens=self.max_completion_length,
                         guided_decoding=guided_decoding,
-                        n=self.args.num_generations * self.repeat,
+                        n=self.num_generations * self.repeat,
                     )
                     all_outputs = self.llm.generate(
                         ordered_set_of_prompts, sampling_params=train_sampling_params, use_tqdm=False
