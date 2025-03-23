@@ -103,10 +103,10 @@ To address this inefficiency, we dynamically allocate pruned completions from ad
 | Model      | Method | Group Size |Pruning Rate | Accuracy | Time (s) | Accelerate Ratio
 | ----------- | ----------- |- |-|-|-|-|
 | Qwen2.5-1.5B-Instruct      | -       |-|-|55.72%|-|-
-| Qwen2.5-1.5B-Instruct      | GRPO    |16 |0%| 77.51% | 45749  |1.00$\times$
-| Qwen2.5-1.5B-Instruct      | GRPO    | 8 |0% | 76.67% | 22200  |2.01$\times$
-| Qwen2.5-1.5B-Instruct      | CPPO    |16 |50%| 77.44%|  24015 |1.91$\times$
-| Qwen2.5-1.5B-Instruct      | CPPO    |32 |50%|  77.74%  | 53730  |0.85$\times$
+| Qwen2.5-1.5B-Instruct      | GRPO    |16 |0%| 77.51% | 45749  |$1.00\times$
+| Qwen2.5-1.5B-Instruct      | GRPO    | 8 |0% | 76.67% | 22200  |$2.01\times$
+| Qwen2.5-1.5B-Instruct      | CPPO    |16 |50%| 77.44%|  24015 |$1.91\times$
+| Qwen2.5-1.5B-Instruct      | CPPO    |32 |50%|  77.74%  | 53730  |$0.85\times$
 
 1. CPPO achieves a comparable accuracy with GRPO while significantly reducing the training time, achieving a $1.91\times$ acceleration on GSM8K datasets.
 2. We find that with the equivalent completions number to participate the gradient update (GRPO 16 vs CPPO 16 with $50\%$ pruning rate), CPPO can achieve a better performance than GRPO. This phenomenon indicates we can first increase the completions number and then use completions pruning to cast down unimportant completions, which can further improve the reasoning ability of the trained model. This is useful when we only access to a limited computational resource.
