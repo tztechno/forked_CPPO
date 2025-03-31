@@ -43,9 +43,9 @@ from transformers import (
 )
 from transformers import Trainer
 from transformers.integrations.deepspeed import is_deepspeed_zero3_enabled, is_deepspeed_available
-from transformers.utils import is_peft_available, is_sagemaker_mp_enabled, is_torch_mlu_available, is_torch_mps_available, is_torch_musa_available, is_torch_npu_available, is_torch_xpu_available, is_accelerate_available
+from transformers.utils import is_peft_available, is_sagemaker_mp_enabled, is_torch_mlu_available, is_torch_mps_available, is_torch_musa_available, is_torch_npu_available, is_torch_xpu_available, is_accelerate_available, is_torch_xla_available
 from transformers.training_args import OptimizerNames, ParallelMode, TrainingArguments
-from transformers.trainer_utils import speed_metrics
+from transformers.trainer_utils import speed_metrics, SaveStrategy
 
 from trl.data_utils import apply_chat_template, is_conversational, maybe_apply_chat_template
 from trl.extras.profiling import profiling_decorator
@@ -411,7 +411,7 @@ class GRPOTrainer(Trainer):
         self.max_prompt_length = args.max_prompt_length
         self.max_completion_length = args.max_completion_length  # = |o_i| in the GRPO paper
         if args.allocation:
-            self.num_generations = int(args.num_generations * args.pruning) # = G in the GRPO paper
+            self.num_generations = int(args.num_generations * (1 - args.pruning)) # = G in the GRPO paper
         else:
             self.num_generations = args.num_generations  # = G in the GRPO paper
         self.use_vllm = args.use_vllm
@@ -424,6 +424,7 @@ class GRPOTrainer(Trainer):
         self._step = 0
         # edit
         self.repeat = 1
+        self.eval_time = 0
         # Buffer the batch to reuse generated outputs across multiple updates. For more details, see
         # `_get_train_sampler` and `_prepare_inputs`.
         self._buffered_inputs = [None] * args.gradient_accumulation_steps
@@ -454,7 +455,7 @@ class GRPOTrainer(Trainer):
         # Check if the per_device_train/eval_batch_size * num processes can be divided by the number of generations
         num_processes = self.accelerator.num_processes
         global_batch_size = args.per_device_train_batch_size * num_processes
-        possible_values = [n_gen for n_gen in range(2, global_batch_size + 1) if (global_batch_size) % n_gen == 0]
+        possible_values = [n_gen for n_gen in range(1, global_batch_size + 1) if (global_batch_size) % n_gen == 0]
         if self.num_generations not in possible_values:
             raise ValueError(
                 f"The global train batch size ({num_processes} x {args.per_device_train_batch_size}) must be evenly "
@@ -565,6 +566,8 @@ class GRPOTrainer(Trainer):
         for i, reward_func in enumerate(self.reward_funcs):
             if isinstance(reward_func, PreTrainedModel):
                 self.reward_funcs[i] = self.accelerator.prepare_model(reward_func, evaluation_mode=True)
+                
+
 
     def _set_signature_columns_if_needed(self):
         # If `self.args.remove_unused_columns` is True, non-signature columns are removed.
@@ -753,7 +756,7 @@ class GRPOTrainer(Trainer):
                         temperature=self.args.temperature,
                         max_tokens=self.max_completion_length,
                         guided_decoding=guided_decoding,
-                        n=self.args.num_generations * self.repeat,
+                        n=self.num_generations * self.repeat,
                     )
                     all_outputs = self.llm.generate(
                         ordered_set_of_prompts, sampling_params=train_sampling_params, use_tqdm=False
@@ -776,7 +779,7 @@ class GRPOTrainer(Trainer):
                     prompts_text = [ x for num in prompts_text for x in [ num ] * self.repeat ]
             else:
                 if self.args.allocation:
-                    self.repeat = int(1 / self.args.pruning)
+                    self.repeat = int(1 / (1-self.args.pruning))
                     prompt_ids = torch.repeat_interleave(prompt_ids, repeats=self.repeat,dim=0)
                     prompt_mask = torch.repeat_interleave(prompt_mask, repeats=self.repeat,dim=0)
                     prompts = [ x for num in prompts for x in [ num ] * self.repeat ] 
@@ -927,7 +930,7 @@ class GRPOTrainer(Trainer):
             
         
         if advantages.shape[0] != 0:
-            with torch.inference_mode():
+            with torch.no_grad():
                 # When using num_iterations == 1, old_per_token_logps == per_token_logps, so we can skip it's
                 # computation here, and use per_token_logps.detach() instead.
                 if self.num_iterations > 1:
@@ -1012,9 +1015,7 @@ class GRPOTrainer(Trainer):
         attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)
         logits_to_keep = completion_ids.size(1)  # we only need to compute the logits for the completion tokens
 
-        start_end_per_token_logps = time.perf_counter()
         per_token_logps = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
-        end_per_token_logps = time.perf_counter()
         
         # Compute the KL divergence between the model and the reference model
         if self.beta != 0.0:
@@ -1201,6 +1202,11 @@ class GRPOTrainer(Trainer):
         Return:
             `torch.Tensor`: The tensor with training loss on this batch.
         """
+        if self.accelerator.is_main_process:
+            if self.state.global_step == 0:
+                print('Begin Training')
+                self.train_start_time = time.perf_counter()
+                
         model.train()
         if hasattr(self.optimizer, "train") and callable(self.optimizer.train):
             self.optimizer.train()
@@ -1275,6 +1281,49 @@ class GRPOTrainer(Trainer):
         else:  # transformers<=4.46
             super().log(logs)
         self._metrics[mode].clear()
+        
+    def _maybe_log_save_evaluate(self, tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval, start_time):
+        if self.accelerator.is_main_process:
+            eval_start_time= time.perf_counter()
+
+        if self.control.should_log and self.state.global_step > self._globalstep_last_logged:
+            if is_torch_xla_available():
+                xm.mark_step()
+
+            logs: Dict[str, float] = {}
+
+            # all_gather + mean() to get average loss over all processes
+            tr_loss_scalar = self._nested_gather(tr_loss).mean().item()
+
+            # reset tr_loss to zero
+            tr_loss -= tr_loss
+
+            logs["loss"] = round(tr_loss_scalar / (self.state.global_step - self._globalstep_last_logged), 4)
+            if grad_norm is not None:
+                logs["grad_norm"] = grad_norm.detach().item() if isinstance(grad_norm, torch.Tensor) else grad_norm
+            logs["learning_rate"] = self._get_learning_rate()
+
+            self._total_loss_scalar += tr_loss_scalar
+            self._globalstep_last_logged = self.state.global_step
+            self.store_flos()
+
+            self.log(logs, start_time)
+
+        metrics = None
+        if self.control.should_evaluate:
+            metrics = self._evaluate(trial, ignore_keys_for_eval)
+            is_new_best_metric = self._determine_best_metric(metrics=metrics, trial=trial)
+
+            if self.args.save_strategy == SaveStrategy.BEST:
+                self.control.should_save = is_new_best_metric
+
+        if self.control.should_save:
+            self._save_checkpoint(model, trial)
+            self.control = self.callback_handler.on_save(self.args, self.state, self.control)
+            
+        if self.accelerator.is_main_process:
+            eval_end_time= time.perf_counter()
+            self.eval_time += eval_end_time - eval_start_time
 
     def create_model_card(
         self,

@@ -45,7 +45,7 @@ import numpy as np
 from open_r1.grpo_trainer_gsm import GRPOTrainer
 
 logger = logging.getLogger(__name__)
-
+import time
 
 def set_random_seed(seed: int = 42):
     """
@@ -301,7 +301,15 @@ def main(script_args, training_args, model_args):
         checkpoint = training_args.resume_from_checkpoint
     elif last_checkpoint is not None:
         checkpoint = last_checkpoint
+    
+
     train_result = trainer.train(resume_from_checkpoint=checkpoint)
+    if trainer.accelerator.is_main_process:  
+        train_end_time = time.perf_counter()
+        print("\nTraining + Eval time:", train_end_time - trainer.train_start_time)
+        print("\nEval time:", trainer.eval_time)
+        print("\nTraining time:", train_end_time - trainer.train_start_time - trainer.eval_time)
+    
     metrics = train_result.metrics
     metrics["train_samples"] = len(dataset[script_args.dataset_train_split])
     trainer.log_metrics("train", metrics)
