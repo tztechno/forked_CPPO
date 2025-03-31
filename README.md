@@ -1,128 +1,32 @@
 # CPPO: Accelerating the Training of Group Relative Policy Optimization-Based Reasoning Models
 
 
-## Note: Our paper will be released within the next one to two weeks, accomplished by more comprehensive results.
+<p align="center">
+CPPO-1.5B-n-16-0.875 <a href="https://huggingface.co/Stardust1956/CPPO-1.5B-n-16-0.875">🤗</a> <br>
+<a href="https://arxiv.org/abs/2503.22342"> <img src='https://img.shields.io/badge/arXiv-2503.22342-b31b1b.svg'></a> <br> Wechat <a href="./asset/wechat.png">💭</a> <br>
+If you like CPPO, pls give us a star⭐ !
+</p>
 
 ## Abstract
-We introduce **Completion Pruning Policy Optimization (CPPO)** to accelerate the training of reasoning models based on Group Relative Policy Optimization (GRPO). GRPO, while effective, incurs high training costs due to the need for sampling multiple completions for each question. Our analysis reveals that the number of completions impacts model accuracy sublinearly yet increases training time multiplicatively, and not all completions contribute equally to policy training---their contribution depends on their relative advantage. To address these issues, we propose CPPO, which prunes completions with low absolute advantages, significantly reducing the number needed for gradient calculation and updates. Additionally, we introduce a dynamic completion allocation strategy to maximize GPU utilization by incorporating additional questions, further enhancing training efficiency. Experiments on GSM8K datasets and Qwen2.5-1.5b-Instruct models demonstrate that CPPO accelerates reasoning model training by nearly **$$1.60 \times$$** while maintaining the same performance as the original GRPO.
+This paper introduces Completion Pruning Policy Optimization (CPPO) to accelerate the training of reasoning models based on Group Relative Policy Optimization (GRPO). GRPO, while effective, incurs high training costs due to the need for sampling multiple completions for each question. Our experiment and theoretical analysis reveals that the number of completions impacts model accuracy yet increases training time multiplicatively, and **not all completions contribute equally to policy training**---t**heir contribution depends on their relative advantage**. To address these issues, we propose CPPO, which prunes completions with low absolute advantages, significantly reducing the number needed for gradient calculation and updates. Additionally, we introduce a dynamic completion allocation strategy to maximize GPU utilization by incorporating additional questions, further enhancing training efficiency. Experimental results demonstrate that CPPO achieves up to **$8.32\times$** speedup on GSM8K and **$3.51\times$** on Math while preserving or even enhancing the accuracy compared to the original GRPO.
 
-## Motivation
+## To Do
+- [ ] The training code of CPPO in Math dataset.
 
-GRPO's policy objective function:
-
-![](./asset/grpo.png)
-The GRPO algorithm's training overhead scales linearly with the number of completions sampled per question. This is due to the need to compute predicted probabilities for the policy, reference, and old policy models across all completions. For instance, in DeepSeek-Math, using 64 completions requires 192 forward pass per question ($64 \times 3$), incurring significant computational costs. This raises two critical questions: 
-
-**(1) How does the number of completions affect policy model accuracy? Does increasing completions always enhance performance?**
-
-![image](./asset/analyze.png)
-
-The number of completions impacts model accuracy **sublinearly** yet increases training time **multiplicatively**. Crucially, reducing completions to cut costs risks degrading reasoning capabilities, making it impractical.
-
-**(2) Do all completions in a group contribute equally to training?**
-
-**Not all completions contribute equally to policy training**---their contribution depends on their relative **advantage**.
-
-The derivative of the GRPO's policy objective function in Eq.(1) with respect to the model parameters $\theta$ as:
-
-![](./asset/Derivative.png)
-
- **(1) Advantage-weighted probability ratio term**  directly ties the contribution of each completion to its advantage. This term incentivizes the policy to prioritize actions with higher rewards, as the advantage function quantifies how much a given action improves expected returns relative to the baseline. By amplifying high-advantage completions and suppressing low-advantage ones, this term guides the policy optimization toward reward-aligned reasoning patterns.
-
-**(2) KL divergence constraint term**  enforces stability by penalizing deviations from the reference model $\pi_{ref}$. However, this constraint is not inherently designed to shape the policy's reasoning patterns but rather ensures smooth updates during training.
-
-**(3) Policy model gradient term** represents the gradient of the log-probability of the policy's predicted action with respect to the model parameters $\theta$.
-
-
-Recent work by [Hu et al.](https://github.com/Open-Reasoner-Zero/Open-Reasoner-Zero,) demonstrates that removing the KL divergence constraint does not impair the trained model's reasoning ability, as the policy's core reasoning patterns are primarily driven by the reward-aligned advantage term. Motivated by this insight, we approximate the policy objective's derivative as:
-
-![alt text](./asset/formula3.png)
-
-effectively decoupling the optimization from KL regularization while retaining the reward-driven learning signal.
-
-
-To better understand this formulation, we decompose the advantage-weighted probability ratio term into the **Probability ratio** term and the **Advantage** term. For a completion that significantly contribute to the policy update, all the new three components in Eq.(3) must be non-negligible. A  near-zero or zero value in any of these components would render the overall contribution minimal or nonexistent.
-
-From a computational timing perspective, these components can be categorized as:
-(1) the probability ratio and policy model gradient are post-forward information, meaning they can only be computed after the policy's forward pass.
-(2) The advantage term, however, represents prior-forward information that can be calculated before the policy's forward computation.
-
-
-Given our objective to accelerate GRPO training, we focus on leveraging this prior-forward information. By evaluating the advantage term before the forward pass, we can make an informed decision about whether to process a completion through the policy model. 
-
-
-## Completions Pruning Policy Optimization
-
-![image](./asset/CPPO.png)
-
-The pipeline of the CPPO algorithm is as follows:
-
-(1) The old-policy model samples a group of completions for each question.
-(2) The reward function computes the reward for each completion via :
-
-$$r_i = R_{format}(o_i) + R_{accuracy}(o_i)$$,
-
-where 
-
-$$
-\begin{aligned}
-    R_{\text{format}}(o_i) &= 
-    \begin{cases}
-        1, & \text{if } o_i \text{ follows the correct format}, \\
-        0, & \text{otherwise}.
-    \end{cases} \\
-    R_{\text{accuracy}}(o_i) &= 
-    \begin{cases}
-        2, & \text{if } o_i \text{ directly matchs the correct answer}, \\
-        1.5 & \text{if } o_i \text{ matchs the correct answer after regular parsing}, \\
-        0, & \text{otherwise}.
-    \end{cases}
-\end{aligned}
-$$
-
-(3) The relative advantage of each completion is calculated according to:
-
-$$
-A_i = \frac{r_i - \mathrm{mean}(\{r_1, r_2, \dots, r_G\})}
-    {\mathrm{std}(\{r_1, r_2, \dots, r_G\})}. 
-$$
-
-(4) CPPO retains $$k = \lfloor G \times (1 - P)\rfloor$$ completions with highest absolute advantages, $P$ is pruning rate and $G$ is the compeletion number.
-
-(5) The policy model is updated based on the selected completions.
-
-
-## Parallel Processing through Dynamic Completion Allocation
-![alt text](./asset/allocation.png)
-
-A single device can process a maximum of $B$ question per batch, with each question generating $G$ candidate completions. After pruning, the total number of retained completions per device reduces to $B \times k$, resulting in suboptimal GPU utilization and underleveraged parallel computing capabilities.
-
-To address this inefficiency, we dynamically allocate pruned completions from additional questions into the device's processing pipeline, as illustrated in the figure above. This strategy ensures that each device operates at full capacity by continuously populating its memory with high-quality completions derived from both the original and newly introduced questions. Critically, all newly incorporated completions undergo the same rigorous pruning process to maintain consistency and relevance.
-## Key Results
-
-| Model      | Method | Group Size |Pruning Rate | Accuracy | Time (s) | Accelerate Ratio
-| ----------- | ----------- |- |-|-|-|-|
-| Qwen2.5-1.5B-Instruct      | -       |-|-|55.72%|-|-
-| Qwen2.5-1.5B-Instruct      | GRPO    |16 |0%| 77.51% | 45749  |$1.00\times$
-| Qwen2.5-1.5B-Instruct      | GRPO    | 8 |0% | 76.67% | 22200  |$2.01\times$
-| Qwen2.5-1.5B-Instruct      | CPPO    |16 |50%| 77.44%|  24015 |$1.91\times$
-| Qwen2.5-1.5B-Instruct      | CPPO    |32 |50%|  77.74%  | 53730  |$0.85\times$
-
-1. CPPO achieves a comparable accuracy with GRPO while significantly reducing the training time, achieving a $1.91\times$ acceleration on GSM8K datasets.
-2. We find that with the equivalent completions number to participate the gradient update (GRPO 16 vs CPPO 16 with 50% pruning rate), CPPO can achieve a better performance than GRPO. This phenomenon indicates we can first increase the completions number and then use completions pruning to cast down unimportant completions, which can further improve the reasoning ability of the trained model. This is useful when we only access to a limited computational resource.
-
-**We will release more results about models of different scales and other datasets next week.**
-
-![image](./asset/acc.png)
-![image](./asset/reward.png)
-
-CPPO achieves a similar reward and evaluation accuracy with GRPO, indicating that CPPO can maintain the training stability and effectiveness of GRPO.
-
+## Main Results
+| Method                | Group Size (G) | Pruning Rate (P) | k  | Accuracy  | Training Time | Accelerate Ratio |
+|-----------------------|---------------|------------------|----|-----------|---------------|------------------|
+| Qwen2.5-1.5B-Instruct | -             | -                | -  | 55.72%    | -             | -                |
+| GRPO                 | 16            | 0.00%            | 16 | 77.05%    | 23393s        | 1.00×            |
+| CPPO                 | 16            | 50.00%           | 8  | 77.67%    | 12930s        | 1.81×            |
+| CPPO                 | 16            | 75.00%           | 4  | 78.81%    | 7159s         | 3.27×            |
+| CPPO                 | 16            | 87.50%           | 2  | 80.41%    | 4781s         | 4.89×            |
+| CPPO                 | 16            | 93.75%           | 1  | 78.20%    | 2813s         | 8.32×            |
 
 
 ## To Reproduce
 
-### 1. Prepare the environment according to [Open R1](https://github.com/huggingface/open-r1).
+### 1. Prepare the environment according to [Open R1](https://github.com/huggingface/open-r1) or :
 ```bash
 conda create -n cppo python=3.11
 conda activate cppo
@@ -132,7 +36,7 @@ pip install flash-attn --no-build-isolation
 pip install -e ".[dev]"
 ```
 ### 2. Training:
-You need two GPU with 80G memory to reproduce our results.
+You need two GPU with 80G memory to reproduce our results on GSM8K.
 #### GRPO
 ```bash
 sh scripts/GRPO.sh
@@ -142,6 +46,11 @@ sh scripts/GRPO.sh
 sh scripts/CPPO.sh
 ```
 ### 3. Evaluation:
+#### Qwen2.5-1.5B-Instruct
+```bash
+sh scripts/Eval_qwen2.5-1.5b.sh
+```
+#### CPPO-1.5B-n-16-0.875
 ```bash
 sh scripts/Eval.sh
 ```
@@ -149,3 +58,17 @@ sh scripts/Eval.sh
 
 ## Acknowledgments
 We are very grateful to the [Open R1](https://github.com/huggingface/open-r1) teams for createing awesome repo.
+
+
+## Citation
+```bibtex
+@misc{lin2025CPPO,
+      title={CPPO: Accelerating the Training of Group Relative Policy Optimization-Based Reasoning Models}, 
+      author={Zhihang Lin and Mingbao Lin and Yuan Xie and Rongrong Ji},
+      year={2025},
+      eprint={2503.22342},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2503.22342}, 
+}
+```
