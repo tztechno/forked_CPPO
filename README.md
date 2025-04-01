@@ -3,9 +3,7 @@
 
 <p align="center">
 CPPO-1.5B-n-16-0.875 <a href="https://huggingface.co/Stardust1956/CPPO-1.5B-n-16-0.875">🤗</a> <br>
-<a href="https://arxiv.org/abs/2503.22342"> <img src='https://img.shields.io/badge/arXiv-2503.22342-b31b1b.svg'></a> <br> Wechat <a href="./asset/wechat.jpg">💭</a> <br>
-
-<img src="./asset/wechat.jpg" width="300">
+<a href="https://arxiv.org/abs/2503.22342"> <img src='https://img.shields.io/badge/arXiv-2503.22342-b31b1b.svg'></a> <br> Wechat <a href="#discussion">💭</a> <br>
 
 <div align="center">
     <h2>If you like CPPO, pls give us a star⭐ </h2>
@@ -78,3 +76,7 @@ We are very grateful to the [Open R1](https://github.com/huggingface/open-r1) te
       url={https://arxiv.org/abs/2503.22342}, 
 }
 ```
+
+## Discussion
+If you are interested in this project, please feel free to join our Wechat group for discussion.
+<img src="./asset/wechat.jpg" width="300">
