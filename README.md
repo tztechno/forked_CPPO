@@ -63,6 +63,10 @@ sh scripts/Eval.sh
 ## Acknowledgments
 We are very grateful to the [Open R1](https://github.com/huggingface/open-r1) teams for createing awesome repo.
 
+## Discussion
+If you are interested in this project, please feel free to join our Wechat group for discussion.
+
+<img src="./asset/wechat_new.jpg" width="300">
 
 ## Citation
 ```bibtex
@@ -76,7 +80,3 @@ We are very grateful to the [Open R1](https://github.com/huggingface/open-r1) te
       url={https://arxiv.org/abs/2503.22342}, 
 }
 ```
-
-## Discussion
-If you are interested in this project, please feel free to join our Wechat group for discussion.
-<img src="./asset/wechat.jpg" width="300">
