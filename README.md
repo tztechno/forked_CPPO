@@ -7,7 +7,7 @@ CPPO-1.5B-n-16-0.875 <a href="https://huggingface.co/Stardust1956/CPPO-1.5B-n-16
 
 <img src="./asset/wechat.jpg" width="300">
 
-If you like CPPO, pls give us a star⭐ !
+<center>If you like CPPO, pls give us a star⭐ !<center>
 </p>
 
 ## Abstract
