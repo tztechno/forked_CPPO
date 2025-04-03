@@ -70,13 +70,10 @@ If you are interested in this project, please feel free to join our Wechat group
 
 ## Citation
 ```bibtex
-@misc{lin2025CPPO,
-      title={CPPO: Accelerating the Training of Group Relative Policy Optimization-Based Reasoning Models}, 
-      author={Zhihang Lin and Mingbao Lin and Yuan Xie and Rongrong Ji},
-      year={2025},
-      eprint={2503.22342},
-      archivePrefix={arXiv},
-      primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2503.22342}, 
+@article{lin2025cppo,
+  title={CPPO: Accelerating the Training of Group Relative Policy Optimization-Based Reasoning Models},
+  author={Lin, Zhihang and Lin, Mingbao and Xie, Yuan and Ji, Rongrong},
+  journal={arXiv preprint arXiv:2503.22342},
+  year={2025}
 }
 ```
