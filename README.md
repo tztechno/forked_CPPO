@@ -61,7 +61,7 @@ sh scripts/Eval.sh
 
 
 ## Acknowledgments
-We are very grateful to the [Open R1](https://github.com/huggingface/open-r1) teams for createing awesome repo.
+We are very grateful to the [Open R1](https://github.com/huggingface/open-r1) teams for creating awesome repo.
 
 ## Discussion
 If you are interested in this project, please feel free to join our Wechat group for discussion.
