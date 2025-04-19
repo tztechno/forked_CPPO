@@ -263,8 +263,8 @@ def main(script_args, training_args, model_args):
         if "messages" in dataset[split].column_names:
             dataset[split] = dataset[split].remove_columns("messages")
             
-        if "answer" in dataset[split].column_names:
-            dataset[split] = dataset[split].rename_column("answer","solution")
+        # if "answer" in dataset[split].column_names:
+        #     dataset[split] = dataset[split].rename_column("answer","solution")
 
     logger.info("*** Initializing model kwargs ***")
     torch_dtype = (
