@@ -43,7 +43,7 @@ from open_r1.utils.wandb_logging import init_wandb_training
 from trl import  ModelConfig, ScriptArguments, TrlParser, get_peft_config
 import random 
 import numpy as np
-from open_r1.grpo_trainer_gsm import GRPOTrainer
+from open_r1.grpo_trainer_math import GRPOTrainer
 
 logger = logging.getLogger(__name__)
 import time
