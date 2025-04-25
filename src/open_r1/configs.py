@@ -68,6 +68,11 @@ class GRPOConfig(trl.GRPOConfig):
     )
     allocation: bool = field(default=False, metadata={"help": "Generate first, then prune."})
 
+    ### stpete added 2025-04-26
+    policy_loss: Optional[str] = field(
+        default='none',
+        metadata={"help": ("What policy? none, vanilla or plusplus.")},
+    )
 
 @dataclass
 class SFTConfig(trl.SFTConfig):
