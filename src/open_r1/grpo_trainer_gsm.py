@@ -1003,60 +1003,75 @@ class GRPOTrainer(Trainer):
         }
 
     @profiling_decorator
+    #### revised
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-            
         if return_outputs:
             raise ValueError("The GRPOTrainer does not support returning outputs")
+        
         mode = "eval" if self.control.should_evaluate else "train"
-        # Compute the per-token log probabilities for the model
         advantages = inputs["advantages"]
         prompt_ids, prompt_mask = inputs["prompt_ids"], inputs["prompt_mask"]
         completion_ids, completion_mask = inputs["completion_ids"], inputs["completion_mask"]
         input_ids = torch.cat([prompt_ids, completion_ids], dim=1)
         attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)
-        logits_to_keep = completion_ids.size(1)  # we only need to compute the logits for the completion tokens
-
+        logits_to_keep = completion_ids.size(1)
+    
+        # 1. トークンごとの対数確率を計算
         per_token_logps = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
         
-        # Compute the KL divergence between the model and the reference model
+        # 2. RAFT用の損失計算
+        if self.config.policy_loss in ['vanilla', 'plusplus']:
+            rewards = inputs.get('raw_rewards', advantages)  # 生の報酬値を取得
+            weights = self._normalize_rewards(rewards).unsqueeze(1)  # 報酬を[0,1]範囲に正規化
+            
+            if self.config.policy_loss == 'plusplus':
+                # クリッピングを適用 (1-ε, 1+εの範囲に制限)
+                weights = torch.clamp(weights, 
+                                   1-self.config.clip_epsilon, 
+                                   1+self.config.clip_epsilon)
+            
+            # 報酬重み付けされた損失
+            per_token_loss = -per_token_logps * weights
+            
+            # メトリクス記録
+            self._metrics[mode]["reward_weight_mean"].append(weights.mean().item())
+            self._metrics[mode]["reward_weight_std"].append(weights.std().item())
+            
+        else:
+            # 3. 従来のGRPO損失計算
+            old_per_token_logps = (inputs["old_per_token_logps"] 
+                                 if self.num_iterations > 1 
+                                 else per_token_logps.detach())
+            ratio = torch.exp(per_token_logps - old_per_token_logps)
+            clipped_ratio = torch.clamp(ratio, 1-self.epsilon, 1+self.epsilon)
+            
+            per_token_loss1 = ratio * advantages.unsqueeze(1)
+            per_token_loss2 = clipped_ratio * advantages.unsqueeze(1)
+            per_token_loss = -torch.min(per_token_loss1, per_token_loss2)
+    
+        # 4. KLダイバージェンス項の追加 (両アルゴリズム共通)
         if self.beta != 0.0:
             ref_per_token_logps = inputs["ref_per_token_logps"]
-            per_token_kl = (
-                torch.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1
-            )
-            second_item = self.beta * (torch.exp(per_token_logps.detach() - ref_per_token_logps.detach())-1)
-            self._metrics[mode]["second_item"].append(second_item.mean().item())
-        else:
-            second_item = torch.zeros_like(per_token_logps)
-
-        # Compute the loss
-
-        # When using num_iterations == 1, old_per_token_logps == per_token_logps, so we can skip it's computation (see
-        # _generate_and_score_completions) and use per_token_logps.detach() instead.
-        old_per_token_logps = inputs["old_per_token_logps"] if self.num_iterations > 1 else per_token_logps.detach()
-        coef_1 = torch.exp(per_token_logps - old_per_token_logps)
-        coef_2 = torch.clamp(coef_1, 1 - self.epsilon, 1 + self.epsilon)
-        per_token_loss1 = coef_1 * advantages.unsqueeze(1)
-        self._metrics[mode]["first_item"].append(per_token_loss1.detach().mean().item())
-        self._metrics[mode]["first_item_div_second_item"].append((per_token_loss1.detach()).mean().item()/(second_item.mean().item()+ 1e-6))
-        self._metrics[mode]["total_sum"].append((per_token_loss1.detach() + second_item).mean().item())
-        per_token_loss2 = coef_2 * advantages.unsqueeze(1)
-        per_token_loss = -torch.min(per_token_loss1, per_token_loss2)
-        if self.beta != 0.0:
-            per_token_loss = per_token_loss + self.beta * per_token_kl
-        loss = (per_token_loss * completion_mask).sum() / completion_mask.sum()
-
-        # Log the metrics
-        mode = "eval" if self.control.should_evaluate else "train"
-
-        if self.beta != 0.0:
-            mean_kl = ((per_token_kl * completion_mask).sum(dim=1) / completion_mask.sum(dim=1)).mean()
-            self._metrics[mode]["kl"].append(self.accelerator.gather_for_metrics(mean_kl).mean().item())
-
-        is_clipped = (per_token_loss1 < per_token_loss2).float()
-        clip_ratio = (is_clipped * completion_mask).sum() / completion_mask.sum()
-        self._metrics[mode]["clip_ratio"].append(self.accelerator.gather_for_metrics(clip_ratio).mean().item())
+            kl_div = (torch.exp(ref_per_token_logps - per_token_logps) - 
+                    (ref_per_token_logps - per_token_logps) - 1)
+            per_token_loss += self.beta * kl_div
+            self._metrics[mode]["kl_div"].append(kl_div.mean().item())
+    
+        # 5. マスクを適用して最終的な損失を計算
+        loss = (per_token_loss * completion_mask).sum() / (completion_mask.sum() + 1e-8)
+        
+        # メトリクス記録
+        self._metrics[mode]["loss"].append(loss.item())
         return loss
+    
+    def _normalize_rewards(self, rewards):
+        """報酬を[0,1]範囲に正規化"""
+        min_r = rewards.min()
+        max_r = rewards.max()
+        return (rewards - min_r) / (max_r - min_r + 1e-8)
+
+
+    
     
     def evaluate(self, eval_dataset: Optional[Union[Dataset, Dict[str, Dataset]]] = None, ignore_keys: Optional[List[str]] = None, metric_key_prefix: str = "eval") -> Dict[str, float]:
         metric = {}
