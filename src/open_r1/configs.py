@@ -68,6 +68,8 @@ class GRPOConfig(trl.GRPOConfig):
     )
     allocation: bool = field(default=False, metadata={"help": "Generate first, then prune."})
 
+
+    
     # RAFT-specific parameters 2025-04-26
     policy_loss: str = field(
         default='none',
@@ -76,6 +78,16 @@ class GRPOConfig(trl.GRPOConfig):
             "choices": ["none", "vanilla", "plusplus"]
         },
     )
+    kl_coef: float = field(
+        default=0.1,
+        metadata={"help": "Coefficient for KL divergence loss."},
+    )
+    clip_epsilon: float = field(
+        default=0.2,
+        metadata={"help": "Epsilon for clipping in plusplus policy loss."},
+    )
+
+
 @dataclass
 class SFTConfig(trl.SFTConfig):
     """
