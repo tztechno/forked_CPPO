@@ -68,12 +68,14 @@ class GRPOConfig(trl.GRPOConfig):
     )
     allocation: bool = field(default=False, metadata={"help": "Generate first, then prune."})
 
-    ### stpete added 2025-04-26
-    policy_loss: Optional[str] = field(
+    # RAFT-specific parameters 2025-04-26
+    policy_loss: str = field(
         default='none',
-        metadata={"help": ("What policy? none, vanilla or plusplus.")},
+        metadata={
+            "help": "Type of policy loss to use. Options: 'none', 'vanilla', 'plusplus'",
+            "choices": ["none", "vanilla", "plusplus"]
+        },
     )
-
 @dataclass
 class SFTConfig(trl.SFTConfig):
     """
