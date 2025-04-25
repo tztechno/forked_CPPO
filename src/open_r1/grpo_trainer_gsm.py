@@ -195,6 +195,16 @@ class RepeatRandomSampler(Sampler):
         return self.num_samples * self.mini_repeat_count * self.repeat_count
 
 
+
+
+
+
+
+
+
+
+
+
 class GRPOTrainer(Trainer):
     """
     Trainer for the Group Relative Policy Optimization (GRPO) method. This algorithm was initially proposed in the
@@ -285,6 +295,25 @@ class GRPOTrainer(Trainer):
 
     _tag_names = ["trl", "grpo"]
 
+
+
+
+    def _init_raft_components(self):
+        """RAFT用のコンポーネント初期化"""
+        if self.config.policy_loss in ['vanilla', 'plusplus']:
+            # 報酬正規化用バッファ
+            self.reward_buffer = {
+                'min': torch.tensor(float('inf')),
+                'max': torch.tensor(float('-inf'))
+            }
+            
+            # クリッピング範囲のデフォルト値設定
+            if not hasattr(self.config, 'clip_epsilon'):
+                self.config.clip_epsilon = 0.2  # デフォルト値
+
+
+
+    
     def __init__(
         self,
         model: Union[str, PreTrainedModel],
@@ -712,6 +741,8 @@ class GRPOTrainer(Trainer):
             inputs = self._generate_and_score_completions(inputs)
         return inputs
 
+
+    
     def _generate_and_score_completions(
         self, inputs: dict[str, Union[torch.Tensor, Any]]
     ) -> dict[str, Union[torch.Tensor, Any]]:
@@ -893,8 +924,7 @@ class GRPOTrainer(Trainer):
             (self.accelerator.process_index + 1) * len(prompts),
         )
         advantages = advantages[process_slice]
-        
-        
+
         mode = "eval" if self.control.should_evaluate else "train"
         # edit
         if self.args.pruning != 0 and mode == 'train':
@@ -1002,7 +1032,6 @@ class GRPOTrainer(Trainer):
         }
 
     @profiling_decorator
-    #### revised
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         if return_outputs:
             raise ValueError("The GRPOTrainer does not support returning outputs")
@@ -1068,7 +1097,6 @@ class GRPOTrainer(Trainer):
         min_r = rewards.min()
         max_r = rewards.max()
         return (rewards - min_r) / (max_r - min_r + 1e-8)
-
 
     
     
