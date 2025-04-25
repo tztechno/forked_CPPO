@@ -333,6 +333,10 @@ class GRPOTrainer(Trainer):
             model_name = model_name.split("/")[-1]
             args = GRPOConfig(f"{model_name}-GRPO")
 
+        # RAFT-specific initialization
+        if config.policy_loss in ['vanilla', 'plusplus']:
+            self._init_raft_components()
+        
         # Models
         # Trained model
         model_init_kwargs = args.model_init_kwargs or {}
