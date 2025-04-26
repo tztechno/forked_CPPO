@@ -558,20 +558,6 @@ class GRPOTrainer(Trainer):
                 pad_token_id=processing_class.pad_token_id,
             )
 
-    def _init_raft_components(self):
-        """RAFT用のコンポーネント初期化"""
-        if self.configs.policy_loss in ['vanilla', 'plusplus']:
-            # 報酬正規化用バッファ
-            self.reward_buffer = {
-                'min': torch.tensor(float('inf')),
-                'max': torch.tensor(float('-inf'))
-            }
-            
-            # クリッピング範囲のデフォルト値設定
-            if not hasattr(self.config, 'clip_epsilon'):
-                self.config.clip_epsilon = 0.2  # デフォルト値
-
-
 
         
         # Gradient accumulation requires scaled loss. Normally, loss scaling in the parent class depends on whether the
@@ -594,8 +580,23 @@ class GRPOTrainer(Trainer):
         for i, reward_func in enumerate(self.reward_funcs):
             if isinstance(reward_func, PreTrainedModel):
                 self.reward_funcs[i] = self.accelerator.prepare_model(reward_func, evaluation_mode=True)
-                
 
+
+    
+    def _init_raft_components(self):
+        """RAFT用のコンポーネント初期化"""
+        if self.configs.policy_loss in ['vanilla', 'plusplus']:
+            # 報酬正規化用バッファ
+            self.reward_buffer = {
+                'min': torch.tensor(float('inf')),
+                'max': torch.tensor(float('-inf'))
+            }
+            
+            # クリッピング範囲のデフォルト値設定
+            if not hasattr(self.config, 'clip_epsilon'):
+                self.config.clip_epsilon = 0.2  # デフォルト値
+
+    
 
     def _set_signature_columns_if_needed(self):
         # If `self.args.remove_unused_columns` is True, non-signature columns are removed.
