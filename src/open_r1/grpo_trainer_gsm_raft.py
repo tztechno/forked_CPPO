@@ -585,7 +585,7 @@ class GRPOTrainer(Trainer):
     
     def _init_raft_components(self):
         """RAFT用のコンポーネント初期化"""
-        if self.configs.policy_loss in ['vanilla', 'plusplus']:
+        if self.config.policy_loss in ['vanilla', 'plusplus']:
             # 報酬正規化用バッファ
             self.reward_buffer = {
                 'min': torch.tensor(float('inf')),
