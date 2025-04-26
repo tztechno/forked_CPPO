@@ -200,13 +200,6 @@ class RepeatRandomSampler(Sampler):
 
 
 
-
-
-
-
-
-
-
 class GRPOTrainer(Trainer):
     """
     Trainer for the Group Relative Policy Optimization (GRPO) method. This algorithm was initially proposed in the
@@ -298,8 +291,6 @@ class GRPOTrainer(Trainer):
     _tag_names = ["trl", "grpo"]
 
 
-
-
     def _init_raft_components(self):
         """RAFT用のコンポーネント初期化"""
         if self.config.policy_loss in ['vanilla', 'plusplus']:
@@ -312,8 +303,6 @@ class GRPOTrainer(Trainer):
             # クリッピング範囲のデフォルト値設定
             if not hasattr(self.config, 'clip_epsilon'):
                 self.config.clip_epsilon = 0.2  # デフォルト値
-
-
 
     
     def __init__(
