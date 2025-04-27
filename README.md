@@ -13,7 +13,7 @@
 
 ### We have just prepared prototypes of RAFT vanilla and RAFT++, so we can use them.
 
-### We are going to prepare also Reinforce vanilla and Reinforce++.
+### We are going to prepare also Reinforce vanilla, Reinforce++ and Reinforce_Rej.
 
 ---
 
