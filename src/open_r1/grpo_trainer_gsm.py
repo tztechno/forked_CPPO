@@ -14,7 +14,7 @@
 
 #
 # scale_rewards setting added for drgrpo 2027-04-27
-#
+# L.449, L.899-901 
 
 import os
 import textwrap
