@@ -10,10 +10,10 @@
 ---
 
 ### GRPO, CPPO, DRGRPO, DRGRPO+CPPO with gsm
-grpo_gsm.py, grpo__trainer_gsm.py
+configs.py, grpo_gsm.py, grpo__trainer_gsm.py
 
 ### RAFTvanilla and RAFT++ with gsm
-grpo_gsm_raft.py, grpo_trainer_gsm_raft.py
+configs.py, grpo_gsm_raft.py, grpo_trainer_gsm_raft.py
 
 ---
 
