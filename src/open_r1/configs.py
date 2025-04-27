@@ -54,6 +54,11 @@ class GRPOConfig(trl.GRPOConfig):
         default=None,
         metadata={"help": ("The name to store runs under.")},
     )
+
+    #######################################
+
+    # setting for CPPO
+    
     metric: Optional[str] = field(
         default='smallest',
         metadata={"help": ("What metrics are used for pruning? smallest, largest or random.")},
@@ -101,7 +106,7 @@ class GRPOConfig(trl.GRPOConfig):
         metadata={"help": "Epsilon for clipping in plusplus policy loss."},
     )
 
-
+    #######################################
 
 @dataclass
 class SFTConfig(trl.SFTConfig):
