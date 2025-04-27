@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# delete L.268-269 for math data
+
 import logging
 import os
 import sys
