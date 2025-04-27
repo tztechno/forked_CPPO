@@ -3,7 +3,7 @@
 
 2025-04-27
 
-### This is forkd repository from https://github.com/lzhxmu/CPPO
+### This is forked repository from https://github.com/lzhxmu/CPPO
 
 ### Here, we will construct playground to try various newly announced RL methods in the open r1 environment.
 
