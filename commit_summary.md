@@ -6,7 +6,7 @@
 
     [configs.py]
 
-    #######################################
+---
     
     [grpo_trainer_gsm_raft.py]
 
@@ -33,7 +33,8 @@
         default=0.2,
         metadata={"help": "Epsilon for clipping in plusplus policy loss."},
     )
-    #######################################
+    
+---
     
     [grpo_trainer_gsm_raft.py]    
     
@@ -90,7 +91,7 @@
         },
     )
     
-    #######################################
+---
     
     [grpo_trainer_gsm.py]   
     
@@ -129,7 +130,7 @@
     allocation: bool = field(default=False, metadata={"help": "Generate first, then prune."})
 
 
-    #######################################
+---
     
     [grpo_trainer_gsm.py]   
 
