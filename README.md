@@ -5,7 +5,7 @@
 
 ### This is forkd repository from https://github.com/lzhxmu/CPPO
 
-### Here, we will construct playground to try whether various newly announced RL methods can be executed in the open r1 environment.
+### Here, we will construct playground to try various newly announced RL methods in the open r1 environment.
 
 ### GRPO and CPPO can be executed using the original CPPO environment.
 
