@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# keep L.268-269 for gsm data
+
 import logging
 import os
 import sys
