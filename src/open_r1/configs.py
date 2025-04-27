@@ -69,6 +69,20 @@ class GRPOConfig(trl.GRPOConfig):
     allocation: bool = field(default=False, metadata={"help": "Generate first, then prune."})
 
 
+    #######################################
+    
+    # from trl grpo_config.py 2025-04-27
+    scale_rewards: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to scale the rewards by dividing them by their standard deviation. If `True` (default), "
+            "the rewards are normalized by the standard deviation, ensuring they have unit variance. If `False`, no "
+            "scaling is applied. The Dr. GRPO paper recommends not scaling the rewards, as scaling by the standard "
+            "deviation introduces a question-level difficulty bias."
+        },
+    )
+    
+    #######################################
     
     # RAFT-specific parameters 2025-04-26
     policy_loss: str = field(
@@ -86,6 +100,7 @@ class GRPOConfig(trl.GRPOConfig):
         default=0.2,
         metadata={"help": "Epsilon for clipping in plusplus policy loss."},
     )
+
 
 
 @dataclass
