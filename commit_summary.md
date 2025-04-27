@@ -1,14 +1,22 @@
 
 
 ---
+
 # REINFORCE
 
+    [configs.py]
 
     #######################################
+    
+    [grpo_trainer_gsm_raft.py]
+
 
 ---
+
 # RAFT
 
+    [configs.py]
+    
     # RAFT-specific parameters 2025-04-26
     policy_loss: str = field(
         default='none',
@@ -26,6 +34,8 @@
         metadata={"help": "Epsilon for clipping in plusplus policy loss."},
     )
     #######################################
+    
+    [grpo_trainer_gsm_raft.py]    
     
     # RAFT L.186-188,L458-469,L.922-950 2025-04-26
 
@@ -64,8 +74,11 @@
             self._metrics[mode]["reward_weight_std"].append(weights.std().item())
 
 ---
+
 # DRGRPD
 
+    [configs.py]
+    
     # from trl grpo_config.py 2025-04-27
     scale_rewards: bool = field(
         default=True,
@@ -78,7 +91,12 @@
     )
     
     #######################################
-
+    
+    [grpo_trainer_gsm.py]   
+    
+    # scale_rewards setting added for drgrpo 2027-04-27
+    # L.449, L.899-901 
+    
         #### for drgrpo 2025-04-27
         self.scale_rewards = args.scale_rewards
 
@@ -89,8 +107,10 @@
 
 
 ---
+
 # CPPO
 
+    [configs.py]
 
     # setting for CPPO
     
@@ -111,6 +131,7 @@
 
     #######################################
     
+    [grpo_trainer_gsm.py]   
 
 
 
