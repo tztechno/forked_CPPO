@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# GRPOとRAFTの機能が完全に独立して動作するように 2025-04-26
+# RAFT L.186-188,L458-469,L.922-950 2025-04-26
 
 import os
 import textwrap
