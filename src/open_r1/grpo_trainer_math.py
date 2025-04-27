@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#
+# scale_rewards setting added for drgrpo 2027-04-27
+# L.449, L.899-901 
+
 import os
 import textwrap
 import warnings
@@ -441,6 +445,10 @@ class GRPOTrainer(Trainer):
         self._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
         self.log_completions = args.log_completions
 
+        #### for drgrpo 2025-04-27
+        self.scale_rewards = args.scale_rewards
+
+        
         super().__init__(
             model=model,
             args=args,
@@ -885,8 +893,14 @@ class GRPOTrainer(Trainer):
             mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(self.num_generations, dim=0)
             std_grouped_rewards = std_grouped_rewards.repeat_interleave(self.num_generations, dim=0)
 
-        advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
+        # advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
 
+        #### for drgrpo 2025-04-27
+        advantages = rewards - mean_grouped_rewards
+        if self.scale_rewards:
+            advantages = advantages / (std_grouped_rewards + 1e-4)
+
+        
         # Slice to keep only the local part of the data
         process_slice = slice(
             self.accelerator.process_index * len(prompts),
