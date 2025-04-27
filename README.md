@@ -11,7 +11,9 @@
 
 ### We have already added the argument for DRGRPO like HF TRL library, so DRGRPO and DRGRPO+CPPO can be executed in our modified CPPO environemnts.
 
-### We are currently preparing RAFTvanilla and RAFT++.
+### We have just prepared prototypes of RAFTvanilla and RAFT++, so we can use them.
+
+### We are going to prepare also ReinforceVanilla and Reinforce++.
 
 ---
 
