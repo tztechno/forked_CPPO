@@ -820,9 +820,15 @@ class GRPOTrainer(Trainer):
         )
         advantages = advantages[process_slice]
 
-
-        # REINFORCEバリアントに応じた処理を追加
+        # REINFORCEメトリクス記録
+        mode = "eval" if self.control.should_evaluate else "train"
         if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
+            rewards = inputs.get("rewards", advantages)
+            self._metrics[mode]["reward_mean"].append(rewards.mean().item())
+            self._metrics[mode]["reward_std"].append(rewards.std().item())
+            self._metrics[mode]["reward_min"].append(rewards.min().item())
+            self._metrics[mode]["reward_max"].append(rewards.max().item())
+
             # REINFORCE/REINFORCE++の場合は、normalizeした報酬も返す
             if self.args.reinforce_variant == "plusplus":
                 # バッチ内で正規化した報酬を計算（REINFORCE++用）
@@ -958,7 +964,7 @@ class GRPOTrainer(Trainer):
             "old_per_token_logps": old_per_token_logps,
             "ref_per_token_logps": ref_per_token_logps,
             "advantages": advantages,
-            "rewards": combined_rewards,  # REINFORCE用の報酬を追加            
+            "rewards": rewards if hasattr(self.args, 'reinforce_variant') else None,          
         }
 
 
@@ -1003,19 +1009,20 @@ class GRPOTrainer(Trainer):
             self._metrics[mode]["reward_weight_mean"].append(weights.mean().item())
             self._metrics[mode]["reward_weight_std"].append(weights.std().item())
 
+
         #### for reinforce
         elif hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
-            # 生成したトークンに対するモデルの対数確率を取得
+            rewards = inputs.get("rewards")
+            if rewards is None:
+                raise ValueError("REINFORCE training requires rewards in inputs")
+                
             log_probs = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
+            loss = -(log_probs * rewards).mean()
             
-            # rewardsを取得（advantagesをフォールバックとして使用）
-            rewards = inputs.get("rewards", advantages)  # ここでrewardsを定義
-            if rewards is not None:
-                # REINFORCE/REINFORCE++の損失計算：log_probs * rewards
-                loss = -(log_probs * rewards).mean()
-            else:
-                # フォールバック（通常はこのケースに入らないはず）
-                loss = -(log_probs * advantages).mean()
+            # メトリクス記録
+            self._metrics[mode]["reinforce_loss"].append(loss.item())
+            if self.args.reinforce_variant == "plusplus":
+                self._metrics[mode]["reward_beta"].append(self.args.reinforce_pp_beta)
 
 
         else:
@@ -1075,6 +1082,7 @@ class GRPOTrainer(Trainer):
         correct = 0
         device = self.accelerator.device
         accuracy = torch.tensor(0, device=device)
+
         for inputs in pbar:
             solution = [x['solution'] for x in inputs]
             solution = [extract_answer_from_dataset(a) for a in solution]
@@ -1186,11 +1194,46 @@ class GRPOTrainer(Trainer):
             mode = "eval" if self.control.should_evaluate else "train"
             self._metrics[mode][f"accuracy"].append(accuracy.item())
         
+
+        # REINFORCE評価用の追加メトリクス
+        if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
+            metric['eval_reward_mean'] = 0
+            metric['eval_reward_std'] = 0
+            metric['eval_reward_min'] = 0
+            metric['eval_reward_max'] = 0
+        
+        # 評価ループ内でREINFORCEメトリクスを計算
+        for inputs in eval_dataloader:
+            # 既存の評価処理
+            
+            # REINFORCE評価の場合
+            if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
+                with torch.no_grad():
+                    outputs = self._generate_and_score_completions(inputs)
+                    rewards = outputs['rewards']
+                    
+                    # メトリクス更新
+                    metric['eval_reward_mean'] += rewards.mean().item()
+                    metric['eval_reward_std'] += rewards.std().item()
+                    metric['eval_reward_min'] += rewards.min().item()
+                    metric['eval_reward_max'] += rewards.max().item()
+        
+        # メトリクス平均化
+        num_batches = len(eval_dataloader)
+        if num_batches > 0:
+            if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
+                metric['eval_reward_mean'] /= num_batches
+                metric['eval_reward_std'] /= num_batches
+                metric['eval_reward_min'] /= num_batches
+                metric['eval_reward_max'] /= num_batches
+
+
         accuracy = broadcast(accuracy)
         metric['eval_accuracy'] += accuracy.item()
         
         return metric
     
+
     def training_step(
         self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]], num_items_in_batch=None
     ) -> torch.Tensor:
@@ -1392,3 +1435,5 @@ class GRPOTrainer(Trainer):
         )
 
         model_card.save(os.path.join(self.args.output_dir, "README.md"))
+
+        
