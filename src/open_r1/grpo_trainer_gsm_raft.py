@@ -13,6 +13,7 @@
 # limitations under the License.
 
 # RAFT L.186-188,L458-469,L.922-950 2025-04-26
+# REINFORCE L.176,197,824,961,1006,1048 2025-04-28
 
 import os
 import textwrap
@@ -171,6 +172,12 @@ class GRPOTrainer(Trainer):
         callbacks: Optional[list[TrainerCallback]] = None,
         optimizers: tuple[Optional[torch.optim.Optimizer], Optional[torch.optim.lr_scheduler.LambdaLR]] = (None, None),
         peft_config: Optional["PeftConfig"] = None,
+
+        # REINFORCE関連の追加設定
+        reinforce_variant: str = "grpo",  # "vanilla", "plusplus", "grpo"のいずれか
+        reinforce_pp_beta: float = 0.1,  # REINFORCE++のβ値（重みづけパラメータ）
+        use_reward_scaling: bool = True,  # 報酬スケーリングを使用するか
+        reward_scaling_factor: float = 1.0,  # 報酬スケーリング係数    
     ):
         
         # Args
@@ -186,7 +193,13 @@ class GRPOTrainer(Trainer):
         # RAFT-specific initialization
         if hasattr(self.config, 'policy_loss') and self.config.policy_loss in ['vanilla', 'plusplus']:
             self._init_raft_components()
-            
+
+        # REINFORCE関連の追加設定    
+        self.reinforce_variant = reinforce_variant
+        self.reinforce_pp_beta = reinforce_pp_beta
+        self.use_reward_scaling = use_reward_scaling
+        self.reward_scaling_factor = reward_scaling_factor
+
         
         # Models
         # Trained model
@@ -614,6 +627,7 @@ class GRPOTrainer(Trainer):
         return inputs
 
 
+
     
     def _generate_and_score_completions(
         self, inputs: dict[str, Union[torch.Tensor, Any]]
@@ -628,6 +642,11 @@ class GRPOTrainer(Trainer):
         )
         prompt_inputs = super()._prepare_inputs(prompt_inputs)
         prompt_ids, prompt_mask = prompt_inputs["input_ids"], prompt_inputs["attention_mask"]
+
+
+
+
+
 
         if self.max_prompt_length is not None:
             prompt_ids = prompt_ids[:, -self.max_prompt_length :]
@@ -773,6 +792,10 @@ class GRPOTrainer(Trainer):
         # Apply weights to each reward function's output and sum
         rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).sum(dim=1)
 
+
+
+
+
         # Compute grouped-wise rewards
         # edit
         if self.args.allocation:
@@ -796,6 +819,40 @@ class GRPOTrainer(Trainer):
             (self.accelerator.process_index + 1) * len(prompts),
         )
         advantages = advantages[process_slice]
+
+
+        # REINFORCEバリアントに応じた処理を追加
+        if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
+            # REINFORCE/REINFORCE++の場合は、normalizeした報酬も返す
+            if self.args.reinforce_variant == "plusplus":
+                # バッチ内で正規化した報酬を計算（REINFORCE++用）
+                normalized_rewards = self._normalize_rewards(rewards)
+                
+                # 設定に応じて報酬を組み合わせる
+                beta = self.args.reinforce_pp_beta  # REINFORCE++のβパラメータ
+                combined_rewards = (1 - beta) * rewards + beta * normalized_rewards
+                
+                # スケーリングを適用（必要に応じて）
+                if self.args.use_reward_scaling:
+                    combined_rewards = combined_rewards * self.args.reward_scaling_factor
+                    
+                # プロセススライスを適用
+                combined_rewards = combined_rewards[process_slice]
+            else:  # vanilla REINFORCE
+                # スケーリングを適用（必要に応じて）
+                if hasattr(self.args, 'use_reward_scaling') and self.args.use_reward_scaling:
+                    combined_rewards = rewards * self.args.reward_scaling_factor
+                else:
+                    combined_rewards = rewards
+                    
+                # プロセススライスを適用
+                combined_rewards = combined_rewards[process_slice]
+        else:
+            # GRPOの場合は従来通りadvantagesを使用
+            combined_rewards = None
+
+
+
 
         mode = "eval" if self.control.should_evaluate else "train"
         # edit
@@ -901,7 +958,13 @@ class GRPOTrainer(Trainer):
             "old_per_token_logps": old_per_token_logps,
             "ref_per_token_logps": ref_per_token_logps,
             "advantages": advantages,
+            "rewards": combined_rewards,  # REINFORCE用の報酬を追加            
         }
+
+
+
+
+
 
     @profiling_decorator
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
@@ -909,13 +972,16 @@ class GRPOTrainer(Trainer):
             raise ValueError("The GRPOTrainer does not support returning outputs")
         
         mode = "eval" if self.control.should_evaluate else "train"
-        advantages = inputs["advantages"]
+        #advantages = inputs["advantages"]
         prompt_ids, prompt_mask = inputs["prompt_ids"], inputs["prompt_mask"]
         completion_ids, completion_mask = inputs["completion_ids"], inputs["completion_mask"]
         input_ids = torch.cat([prompt_ids, completion_ids], dim=1)
         attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)
         logits_to_keep = completion_ids.size(1)
     
+        #rewards = inputs.get("rewards", None)
+        advantages = inputs.get("advantages", None)
+
         # 1. トークンごとの対数確率を計算
         per_token_logps = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
         
@@ -936,7 +1002,20 @@ class GRPOTrainer(Trainer):
             # メトリクス記録
             self._metrics[mode]["reward_weight_mean"].append(weights.mean().item())
             self._metrics[mode]["reward_weight_std"].append(weights.std().item())
+
+        #### for reinforce
+        elif hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
+            # 生成したトークンに対するモデルの対数確率を取得
+            log_probs = self.get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
             
+            if rewards is not None:
+                # REINFORCE/REINFORCE++の損失計算：log_probs * rewards
+                loss = -(log_probs * rewards).mean()
+            else:
+                # フォールバック（通常はこのケースに入らないはず）
+                loss = -(log_probs * advantages).mean()
+
+
         else:
             # 3. 従来のGRPO損失計算
             old_per_token_logps = (inputs["old_per_token_logps"] 
@@ -964,14 +1043,27 @@ class GRPOTrainer(Trainer):
         self._metrics[mode]["loss"].append(loss.item())
         return loss
     
+
+
+    ### REINFORCE++
     def _normalize_rewards(self, rewards):
-        """報酬を[0,1]範囲に正規化"""
+        """
+        REINFORCE++のための報酬正規化
+        論文に従い、各バッチ内の報酬を[0,1]範囲に正規化
+        """
+        if rewards.numel() == 1:  # 単一要素の場合
+            return torch.zeros_like(rewards)
+            
         min_r = rewards.min()
         max_r = rewards.max()
+        
+        # max_rとmin_rが同じ場合（全ての報酬が同一の場合）、ゼロを返す
+        if max_r == min_r:
+            return torch.zeros_like(rewards)
+            
         return (rewards - min_r) / (max_r - min_r + 1e-8)
+    
 
-    
-    
     def evaluate(self, eval_dataset: Optional[Union[Dataset, Dict[str, Dataset]]] = None, ignore_keys: Optional[List[str]] = None, metric_key_prefix: str = "eval") -> Dict[str, float]:
         metric = {}
         metric['eval_accuracy'] = 0
