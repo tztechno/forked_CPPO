@@ -5,7 +5,7 @@
 
 ### This is forked repository from https://github.com/lzhxmu/CPPO
 
-### Here, we will construct playground to try various newly announced RL methods in the open r1 environment.
+### Here, we will construct playground to try various newly announced RL methods in the open r1 environment. https://github.com/huggingface/open-r1
 
 ### GRPO and CPPO can be executed using the original CPPO environment.
 
@@ -18,10 +18,10 @@
 ---
 
 ### GRPO, CPPO, DRGRPO, DRGRPO+CPPO with gsm
-configs.py, grpo_gsm.py, grpo_trainer_gsm.py
+use configs.py, grpo_gsm.py, grpo_trainer_gsm.py
 
 ### RAFTvanilla and RAFT++ with gsm
-configs.py, grpo_gsm_raft.py, grpo_trainer_gsm_raft.py
+use configs.py, grpo_gsm_raft.py, grpo_trainer_gsm_raft.py
 
 ---
 
