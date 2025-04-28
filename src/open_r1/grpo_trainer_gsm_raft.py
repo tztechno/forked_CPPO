@@ -1008,7 +1008,8 @@ class GRPOTrainer(Trainer):
             # 生成したトークンに対するモデルの対数確率を取得
             log_probs = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
             
-            rewards = rewards if 'rewards' in locals() else None  # または適切なデフォルト値
+            # rewardsを取得（advantagesをフォールバックとして使用）
+            rewards = inputs.get("rewards", advantages)  # ここでrewardsを定義
             if rewards is not None:
                 # REINFORCE/REINFORCE++の損失計算：log_probs * rewards
                 loss = -(log_probs * rewards).mean()
