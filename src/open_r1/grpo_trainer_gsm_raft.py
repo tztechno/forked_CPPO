@@ -968,7 +968,44 @@ class GRPOTrainer(Trainer):
         }
 
 
+    def compute_rewards(self, rewards_per_func, prompts):
+        # デバイス移動
+        device = rewards_per_func.device
+        
+        # 1. 形状チェック
+        if rewards_per_func.dim() != 2:
+            raise ValueError(f"rewards_per_func must be 2D tensor, got {rewards_per_func.shape}")
+        
+        # 2. 重み付け統合
+        weights = self.reward_weights.to(device).unsqueeze(0)  # [1, num_funcs]
+        rewards = (rewards_per_func * weights).sum(dim=1)  # [total_batch]
+        
+        # 3. グループ化処理
+        if self.args.allocation:
+            group_size = self.num_generations * self.repeat
+        else:
+            group_size = self.num_generations
+            
+        if rewards.size(0) % group_size != 0:
+            raise ValueError(
+                f"Batch size {rewards.size(0)} not divisible by group size {group_size}"
+            )
+        
+        # 4. 正規化
+        grouped_rewards = rewards.view(-1, group_size)
+        advantages = (grouped_rewards - grouped_rewards.mean(dim=1, keepdim=True)) \
+                    / (grouped_rewards.std(dim=1, keepdim=True) + 1e-4)
+        
+        # 5. プロセス分割
+        local_advantages = advantages.flatten()[self._get_process_slice(prompts)]
+        
+        return local_advantages
 
+    def _get_process_slice(self, prompts):
+        return slice(
+            self.accelerator.process_index * len(prompts),
+            (self.accelerator.process_index + 1) * len(prompts)
+        )
 
 
 
@@ -1017,7 +1054,7 @@ class GRPOTrainer(Trainer):
                 raise ValueError("REINFORCE training requires rewards in inputs")
                 
             log_probs = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
-            loss = -(log_probs * rewards).mean()
+            loss = -(log_probs * rewards).mean() ##########
             
             # メトリクス記録
             self._metrics[mode]["reinforce_loss"].append(loss.item())
@@ -1436,4 +1473,3 @@ class GRPOTrainer(Trainer):
 
         model_card.save(os.path.join(self.args.output_dir, "README.md"))
 
-        
