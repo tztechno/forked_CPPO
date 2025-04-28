@@ -10,6 +10,7 @@
 ### GRPO and CPPO can be executed using the original CPPO environment.
 
 ### We have already added the argument for DRGRPO like HF TRL library, so DRGRPO and DRGRPO+CPPO can be executed in our modified CPPO environemnts.
+https://github.com/huggingface/trl/releases/tag/v0.16.0
 
 ### We have just prepared prototypes of RAFT vanilla and RAFT++, so we can use them.
 
