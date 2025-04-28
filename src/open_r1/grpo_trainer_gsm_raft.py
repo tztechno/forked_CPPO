@@ -1006,7 +1006,7 @@ class GRPOTrainer(Trainer):
         #### for reinforce
         elif hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
             # 生成したトークンに対するモデルの対数確率を取得
-            log_probs = self.get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
+            log_probs = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
             
             if rewards is not None:
                 # REINFORCE/REINFORCE++の損失計算：log_probs * rewards
