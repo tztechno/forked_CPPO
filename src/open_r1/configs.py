@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# All params for CPPO,DRGRPO,RAFT,REINFORCE were set.
+
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -77,6 +79,8 @@ class GRPOConfig(trl.GRPOConfig):
     #######################################
     
     # from trl grpo_config.py 2025-04-27
+    # DRGRPO specific parameter 2025-04-27
+
     scale_rewards: bool = field(
         default=True,
         metadata={
