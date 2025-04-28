@@ -108,6 +108,36 @@ class GRPOConfig(trl.GRPOConfig):
 
     #######################################
 
+    # REINFORCE-specific parameters 2025-04-28
+
+    reinforce_variant: str = field(
+        default="none",
+        metadata={
+            "help": "REINFORCE variant to use. Options: 'none', 'vanilla', 'plusplus'",
+            "choices": ["none", "vanilla", "plusplus"]
+        },
+    )
+    reinforce_pp_beta: float = field(
+        default=0.1,
+        metadata={"help": "Beta parameter for REINFORCE++ (weighting between original and normalized rewards)."},
+    )
+    use_reward_scaling: bool = field(
+        default=True,
+        metadata={"help": "Whether to scale rewards by a constant factor in REINFORCE algorithms."},
+    )
+    reward_scaling_factor: float = field(
+        default=1.0,
+        metadata={"help": "Factor to scale rewards by in REINFORCE algorithms."},
+    )
+    normalize_advantages: bool = field(
+        default=True,
+        metadata={"help": "Whether to normalize advantages in REINFORCE algorithms."},
+    )
+
+
+    #######################################
+
+
 @dataclass
 class SFTConfig(trl.SFTConfig):
     """
