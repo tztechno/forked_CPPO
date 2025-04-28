@@ -823,7 +823,7 @@ class GRPOTrainer(Trainer):
         # REINFORCEメトリクス記録
         mode = "eval" if self.control.should_evaluate else "train"
         if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
-            rewards = inputs.get("rewards", advantages)
+            rewards = inputs["rewards"] if isinstance(inputs, dict) and "rewards" in inputs else advantages
             self._metrics[mode]["reward_mean"].append(rewards.mean().item())
             self._metrics[mode]["reward_std"].append(rewards.std().item())
             self._metrics[mode]["reward_min"].append(rewards.min().item())
