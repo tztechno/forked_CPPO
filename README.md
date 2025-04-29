@@ -39,4 +39,7 @@ https://arxiv.org/abs/2504.11343
 #### REINFORCE++: An Efficient RLHF Algorithm with Robustness to Both Prompt and Reward Models (reinforce)
 https://arxiv.org/abs/2501.03262
 
+#### DAPO: An Open-Source LLM Reinforcement Learning System at Scale (dapo)
+https://arxiv.org/abs/2503.14476
+
 ---
