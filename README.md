@@ -37,11 +37,11 @@ use configs.py, grpo_gsm_raft.py, grpo_trainer_gsm_raft.py
   
 #### A Minimalist Approach to LLM Reasoning: from Rejection Sampling to Reinforce (raft)
 * https://arxiv.org/abs/2504.11343
-* https://github.com/RLHFlow/Minimal-RL.
+* https://github.com/RLHFlow/Minimal-RL
 
 #### A Minimalist Approach to LLM Reasoning: from Rejection Sampling to Reinforce (reinfirce)
 * https://arxiv.org/abs/2504.11343
-* https://github.com/OpenRLHF/OpenRLHF.
+* https://github.com/OpenRLHF/OpenRLHF
 
 #### DAPO: An Open-Source LLM Reinforcement Learning System at Scale (dapo)
 * https://arxiv.org/abs/2503.14476
