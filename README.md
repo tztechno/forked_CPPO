@@ -25,21 +25,26 @@ use configs.py, grpo_gsm_raft.py, grpo_trainer_gsm_raft.py
 
 ---
 
-### The following literature is of interest:
+### The following methods are of our interest:
 
 #### CPPO: Accelerating the Training of Group Relative Policy Optimization-Based Reasoning Models (cppo)
-https://arxiv.org/abs/2503.22342
-
+* https://arxiv.org/abs/2503.22342
+* https://github.com/lzhxmu/CPPO
+  
 #### Understanding R1-Zero-Like Training: A Critical Perspective (drgrpo)
-https://arxiv.org/abs/2503.20783
-
+* https://arxiv.org/abs/2503.20783
+* https://github.com/sail-sg/understand-r1-zero
+  
 #### A Minimalist Approach to LLM Reasoning: from Rejection Sampling to Reinforce (raft)
-https://arxiv.org/abs/2504.11343
+* https://arxiv.org/abs/2504.11343
+* https://github.com/RLHFlow/Minimal-RL.
 
-#### REINFORCE++: An Efficient RLHF Algorithm with Robustness to Both Prompt and Reward Models (reinforce)
-https://arxiv.org/abs/2501.03262
+#### A Minimalist Approach to LLM Reasoning: from Rejection Sampling to Reinforce (reinfirce)
+* https://arxiv.org/abs/2504.11343
+* https://github.com/OpenRLHF/OpenRLHF.
 
 #### DAPO: An Open-Source LLM Reinforcement Learning System at Scale (dapo)
-https://arxiv.org/abs/2503.14476
+* https://arxiv.org/abs/2503.14476
+* https://github.com/ai-in-pm/DAPO
 
 ---
