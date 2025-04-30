@@ -820,14 +820,18 @@ class GRPOTrainer(Trainer):
 
 
         
+        
         # REINFORCEメトリクス記録
         mode = "eval" if self.control.should_evaluate else "train"
         if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
             rewards = inputs["rewards"] if isinstance(inputs, dict) and "rewards" in inputs else advantages
             
             # 報酬テンソルの形状を確認・調整
-            if rewards.dim() == 1:  # [batch_size] の場合
-                rewards = rewards.unsqueeze(-1).expand(-1, log_probs.size(1))  # [batch_size, seq_len]に拡張
+            if rewards.dim() == 1:
+                if "log_probs" not in inputs:
+                    raise ValueError("log_probs is required for reward expansion but missing in inputs!")
+                log_probs = inputs["log_probs"]
+                rewards = rewards.unsqueeze(-1).expand(-1, log_probs.size(1)) ####
             
             # メトリクス記録（元の報酬値で計算）
             flat_rewards = rewards.flatten()  # メトリクス計算用に平坦化
@@ -855,8 +859,7 @@ class GRPOTrainer(Trainer):
             # GRPOの場合は従来通りadvantagesを使用
             combined_rewards = None
 
-
-
+        
 
         mode = "eval" if self.control.should_evaluate else "train"
         # edit
@@ -1051,8 +1054,9 @@ class GRPOTrainer(Trainer):
             if rewards is None:
                 raise ValueError("REINFORCE training requires rewards in inputs")
                 
-            log_probs = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
-            loss = -(log_probs * rewards).mean() ##########
+            log_probs = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep) ####L.1054
+            inputs["log_probs"] = log_probs  ##### 追加
+            loss = -(log_probs * rewards).mean() ####
             
             # メトリクス記録
             self._metrics[mode]["reinforce_loss"].append(loss.item())
