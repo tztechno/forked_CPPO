@@ -819,19 +819,21 @@ class GRPOTrainer(Trainer):
         advantages = advantages[process_slice]
 
 
-        
-        
         # REINFORCEメトリクス記録
         mode = "eval" if self.control.should_evaluate else "train"
+        # L.830付近のREINFORCE処理部を以下のように修正
         if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
-            rewards = inputs["rewards"] if isinstance(inputs, dict) and "rewards" in inputs else advantages
+            rewards = inputs.get("rewards", advantages)
             
-            # 報酬テンソルの形状を確認・調整
             if rewards.dim() == 1:
-                if "log_probs" not in inputs:
-                    raise ValueError("log_probs is required for reward expansion but missing in inputs!")
-                log_probs = inputs["log_probs"]
-                rewards = rewards.unsqueeze(-1).expand(-1, log_probs.size(1)) ####
+                # 代替手段1: 事前計算されたlog_probsを使用
+                if "log_probs" in inputs:
+                    rewards = rewards.unsqueeze(-1).expand(-1, inputs["log_probs"].size(1))
+                # 代替手段2: 生成結果の長さを使用
+                else:
+                    seq_len = completion_ids.size(1)
+                    rewards = rewards.unsqueeze(-1).expand(-1, seq_len)
+                    self._metrics[mode]["warning"].append("used_completion_length_for_expansion")
             
             # メトリクス記録（元の報酬値で計算）
             flat_rewards = rewards.flatten()  # メトリクス計算用に平坦化
