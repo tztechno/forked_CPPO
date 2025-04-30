@@ -794,8 +794,6 @@ class GRPOTrainer(Trainer):
 
 
 
-
-
         # Compute grouped-wise rewards
         # edit
         if self.args.allocation:
@@ -820,39 +818,39 @@ class GRPOTrainer(Trainer):
         )
         advantages = advantages[process_slice]
 
+
+        
         # REINFORCEメトリクス記録
         mode = "eval" if self.control.should_evaluate else "train"
         if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
             rewards = inputs["rewards"] if isinstance(inputs, dict) and "rewards" in inputs else advantages
-            self._metrics[mode]["reward_mean"].append(rewards.mean().item())
-            self._metrics[mode]["reward_std"].append(rewards.std().item())
-            self._metrics[mode]["reward_min"].append(rewards.min().item())
-            self._metrics[mode]["reward_max"].append(rewards.max().item())
-
-            # REINFORCE/REINFORCE++の場合は、normalizeした報酬も返す
+            
+            # 報酬テンソルの形状を確認・調整
+            if rewards.dim() == 1:  # [batch_size] の場合
+                rewards = rewards.unsqueeze(-1).expand(-1, log_probs.size(1))  # [batch_size, seq_len]に拡張
+            
+            # メトリクス記録（元の報酬値で計算）
+            flat_rewards = rewards.flatten()  # メトリクス計算用に平坦化
+            self._metrics[mode]["reward_mean"].append(flat_rewards.mean().item())
+            self._metrics[mode]["reward_std"].append(flat_rewards.std().item())
+            self._metrics[mode]["reward_min"].append(flat_rewards.min().item())
+            self._metrics[mode]["reward_max"].append(flat_rewards.max().item())
+        
+            # REINFORCE/REINFORCE++の処理
             if self.args.reinforce_variant == "plusplus":
-                # バッチ内で正規化した報酬を計算（REINFORCE++用）
+                # バッチ内で正規化（形状を維持）
                 normalized_rewards = self._normalize_rewards(rewards)
-                
-                # 設定に応じて報酬を組み合わせる
-                beta = self.args.reinforce_pp_beta  # REINFORCE++のβパラメータ
+                beta = self.args.reinforce_pp_beta
                 combined_rewards = (1 - beta) * rewards + beta * normalized_rewards
-                
-                # スケーリングを適用（必要に応じて）
-                if self.args.use_reward_scaling:
-                    combined_rewards = combined_rewards * self.args.reward_scaling_factor
-                    
-                # プロセススライスを適用
-                combined_rewards = combined_rewards[process_slice]
             else:  # vanilla REINFORCE
-                # スケーリングを適用（必要に応じて）
-                if hasattr(self.args, 'use_reward_scaling') and self.args.use_reward_scaling:
-                    combined_rewards = rewards * self.args.reward_scaling_factor
-                else:
-                    combined_rewards = rewards
-                    
-                # プロセススライスを適用
-                combined_rewards = combined_rewards[process_slice]
+                combined_rewards = rewards.clone()
+            
+            # スケーリング適用
+            if self.args.use_reward_scaling:
+                combined_rewards = combined_rewards * self.args.reward_scaling_factor
+                
+            # プロセススライス適用
+            combined_rewards = combined_rewards[process_slice]
         else:
             # GRPOの場合は従来通りadvantagesを使用
             combined_rewards = None
