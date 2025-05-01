@@ -1372,8 +1372,25 @@ class GRPOTrainer(Trainer):
 
     def log(self, logs: dict[str, float], start_time: Optional[float] = None) -> None:
         mode = "eval" if self.control.should_evaluate else "train"
-        metrics = {key: sum(val) / len(val) for key, val in self._metrics[mode].items()}  # average the metrics
+        ### metrics = {key: sum(val) / len(val) for key, val in self._metrics[mode].items()}  # average the metrics
+        
+        ### fix 2025-05-01
+        metrics = {}
+        for key, val in self._metrics[mode].items():
+            try:
+                # 数値のみをフィルタリング
+                numeric_vals = [x for x in val if isinstance(x, (int, float))]
+                if numeric_vals:
+                    metrics[key] = sum(numeric_vals) / len(numeric_vals)
+                else:
+                    metrics[key] = 0  # デフォルト値
+                    print(f"Warning: No numeric values for metric {key}")
+            except Exception as e:
+                print(f"Error calculating metric {key}: {e}")
+                metrics[key] = 0  # デフォルト値
 
+
+        
         # This method can be called both in training and evaluation. When called in evaluation, the keys in `logs`
         # start with "eval_". We need to add the prefix "eval_" to the keys in `metrics` to match the format.
         if mode == "eval":
