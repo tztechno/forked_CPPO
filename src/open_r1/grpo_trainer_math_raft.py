@@ -796,7 +796,7 @@ class GRPOTrainer(Trainer):
         # Reinforce-Rej フィルタリング処理開始
         # ======================================================
         if self.args.reinforce_variant == "rej":
-
+            mode = "train" if self.model.training else "eval"  # 追加 
             current_rank = getattr(self.accelerator, 'local_process_index', 0)
             print(f"[Rank {current_rank}] Pre-filter rewards shape: {rewards.shape}, num_generations: {self.num_generations}")
 
