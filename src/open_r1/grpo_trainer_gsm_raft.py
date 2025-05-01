@@ -959,6 +959,11 @@ class GRPOTrainer(Trainer):
                 "completion": gather_object(completions_text),
                 "reward": rewards.tolist(),
             }
+            
+            #### 追加 2025-05-01
+            ### print({k: len(v) for k, v in table.items()})
+            max_len = max(len(v) for v in table.values())
+            table = {k: v if len(v) == max_len else v + [None]*(max_len-len(v)) for k, v in table.items()}
             df = pd.DataFrame(table)
 
             if wandb.run is not None and self.accelerator.is_main_process:
