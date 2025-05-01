@@ -793,21 +793,38 @@ class GRPOTrainer(Trainer):
         rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).sum(dim=1)
 
 
-
         # Compute grouped-wise rewards
-        # edit
+        if self.args.reinforce_variant == "rej":
+            # Reinforce-Rej: Filter out all-correct and all-incorrect prompts
+            grouped_rewards = rewards.view(-1, self.num_generations)
+            all_incorrect = (grouped_rewards == -1).all(dim=1)  # 全回答が不正解
+            all_correct = (grouped_rewards == 1).all(dim=1)     # 全回答が正解
+            keep_mask = ~(all_incorrect | all_correct)          # 保持するサンプル
+            
+            # フィルタリングを適用
+            rewards = rewards[keep_mask.repeat_interleave(self.num_generations)]
+            prompt_completion_ids = prompt_completion_ids[keep_mask.repeat_interleave(self.num_generations)]
+            prompt_ids = prompt_ids[keep_mask.repeat_interleave(self.num_generations)]
+            prompt_mask = prompt_mask[keep_mask.repeat_interleave(self.num_generations)]
+            completion_ids = completion_ids[keep_mask.repeat_interleave(self.num_generations)]
+            completion_mask = completion_mask[keep_mask.repeat_interleave(self.num_generations)]
+            
+            # フィルタリング後の統計を記録
+            self._metrics[mode]["filtered_all_incorrect"].append(all_incorrect.float().mean().item())
+            self._metrics[mode]["filtered_all_correct"].append(all_correct.float().mean().item())
+
+        # 通常の報酬計算処理 (GRPO/Reinforce共通)
         if self.args.allocation:
-            mean_grouped_rewards = rewards.view(-1, self.num_generations * self.repeat ).mean(dim=1)
-            std_grouped_rewards = rewards.view(-1, self.num_generations * self.repeat ).std(dim=1)
+            mean_grouped_rewards = rewards.view(-1, self.num_generations * self.repeat).mean(dim=1)
+            std_grouped_rewards = rewards.view(-1, self.num_generations * self.repeat).std(dim=1)
             mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(self.num_generations * self.repeat, dim=0)
             std_grouped_rewards = std_grouped_rewards.repeat_interleave(self.num_generations * self.repeat, dim=0)
         else:
-            mean_grouped_rewards = rewards.view(-1, self.num_generations ).mean(dim=1)
-            std_grouped_rewards = rewards.view(-1, self.num_generations ).std(dim=1)
-
-            # Normalize the rewards to compute the advantages
+            mean_grouped_rewards = rewards.view(-1, self.num_generations).mean(dim=1)
+            std_grouped_rewards = rewards.view(-1, self.num_generations).std(dim=1)
             mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(self.num_generations, dim=0)
             std_grouped_rewards = std_grouped_rewards.repeat_interleave(self.num_generations, dim=0)
+
 
         advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
 
@@ -943,6 +960,12 @@ class GRPOTrainer(Trainer):
             self._metrics[mode][f"rewards/{reward_func_name}"].append(reward_per_func[i].item())
 
         self._metrics[mode]["reward"].append(rewards.mean().item())
+        #### fix for reinforce_rej
+        if self.args.reinforce_variant == "rej":
+            self._metrics[mode]["filter_rate"].append(
+                (all_incorrect.float().mean().item() + all_correct.float().mean().item())
+            )
+
         self._metrics[mode]["reward_std"].append(std_grouped_rewards.mean().item())
 
         if (
@@ -1062,14 +1085,16 @@ class GRPOTrainer(Trainer):
 
 
         #### for reinforce
-        elif hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
+        elif hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus", "rej"]:
             rewards = inputs.get("rewards")
             if rewards is None:
                 raise ValueError("REINFORCE training requires rewards in inputs")
-                
-            log_probs = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep) ####L.1054
-            inputs["log_probs"] = log_probs  ##### 追加
-            loss = -(log_probs * rewards).mean() ####
+            
+            log_probs = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
+            inputs["log_probs"] = log_probs
+            
+            # Reinforce-Rejではフィルタリング済みなのでvanillaと同じ処理
+            loss = -(log_probs * rewards).mean()
             
             # メトリクス記録
             self._metrics[mode]["reinforce_loss"].append(loss.item())
