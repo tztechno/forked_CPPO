@@ -112,13 +112,12 @@ class GRPOConfig(trl.GRPOConfig):
 
     #######################################
 
-    # REINFORCE-specific parameters 2025-04-28
-
+    # REINFORCE-specific parameters 2025-04-28 (updated for Reinforce-Rej)
     reinforce_variant: str = field(
         default="none",
         metadata={
-            "help": "REINFORCE variant to use. Options: 'none', 'vanilla', 'plusplus'",
-            "choices": ["none", "vanilla", "plusplus"]
+            "help": "REINFORCE variant to use. Options: 'none', 'vanilla', 'plusplus', 'rej'",
+            "choices": ["none", "vanilla", "plusplus", "rej"]  # 'rej' を追加
         },
     )
     reinforce_pp_beta: float = field(
@@ -135,7 +134,18 @@ class GRPOConfig(trl.GRPOConfig):
     )
     normalize_advantages: bool = field(
         default=True,
-        metadata={"help": "Whether to normalize advantages in REINFORCE algorithms."},
+        metadata={
+            "help": "Whether to normalize advantages in REINFORCE algorithms. "
+                    "Note: For 'rej' variant, this only applies to non-filtered samples."
+        },
+    )
+    filter_all_correct: bool = field(
+        default=True,
+        metadata={"help": "Whether to filter out prompts with all correct responses (for 'rej' variant)."},
+    )
+    filter_all_incorrect: bool = field(
+        default=True,
+        metadata={"help": "Whether to filter out prompts with all incorrect responses (for 'rej' variant)."},
     )
 
 
