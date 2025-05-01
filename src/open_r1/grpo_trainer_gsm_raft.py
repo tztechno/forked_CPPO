@@ -61,6 +61,34 @@ from open_r1.rewards_gsm import extract_answer_from_model_output, extract_answer
 
 from tqdm import tqdm
 
+import atexit
+import torch.distributed as dist
+import signal
+import sys
+
+# クリーンアップ関数
+def cleanup_process_group():
+    if dist.is_initialized():
+        try:
+            dist.barrier()  # 全プロセスを同期
+            dist.destroy_process_group()
+            print("プロセスグループが正常に破棄されました")
+        except Exception as e:
+            print(f"プロセスグループの破棄中にエラーが発生しました: {e}")
+
+# シグナルハンドラ
+def signal_handler(sig, frame):
+    cleanup_process_group()
+    sys.exit(0)
+
+# 終了時に自動的に実行
+atexit.register(cleanup_process_group)
+
+# シグナルハンドラを設定
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
+
+
 if is_sagemaker_mp_enabled():
     import smdistributed.modelparallel.torch as smp
     from smdistributed.modelparallel import __version__ as SMP_VERSION
