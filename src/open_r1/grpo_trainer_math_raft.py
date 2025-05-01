@@ -641,420 +641,499 @@ class GRPOTrainer(Trainer):
         return inputs
 
 
-
-    
     def _generate_and_score_completions(
-        self, inputs: dict[str, Union[torch.Tensor, Any]]
-    ) -> dict[str, Union[torch.Tensor, Any]]:
-        
-        device = self.accelerator.device
-        prompts = [x["prompt"] if isinstance(x, dict) else x[0] for x in inputs]
-        prompts_text = [maybe_apply_chat_template(example, self.processing_class)["prompt"] for example in inputs]
-        
-        prompt_inputs = self.processing_class(
-            prompts_text, return_tensors="pt", padding=True, padding_side="left", add_special_tokens=False
-        )
-        prompt_inputs = super()._prepare_inputs(prompt_inputs)
-        prompt_ids, prompt_mask = prompt_inputs["input_ids"], prompt_inputs["attention_mask"]
-
-
-
-
-
-
-        if self.max_prompt_length is not None:
-            prompt_ids = prompt_ids[:, -self.max_prompt_length :]
-            prompt_mask = prompt_mask[:, -self.max_prompt_length :]
-        # Generate completions using either vLLM or regular generation
-        if self.args.use_vllm:
-            # First, have main process load weights if needed
-            if self.state.global_step != self._last_loaded_step:
-                self._move_model_to_vllm()
-                self._last_loaded_step = self.state.global_step
-
-            # Generate completions using vLLM: gather all prompts and use them in a single call in the main process
-            all_prompts_text = gather_object(prompts_text)
-            if self.accelerator.is_main_process:
-                # Since 'prompts' contains 'num_generations' duplicates, we first take unique prompts, and generate
-                # num_generations outputs for each one. This is faster than generating outputs for each duplicate
-                # prompt individually.
-                ordered_set_of_prompts = list(dict.fromkeys(all_prompts_text))
-                
-                # edit
-                if self.args.allocation:
-                    self.repeat = int(1 / (1-self.args.pruning))
-                    if self.args.vllm_guided_decoding_regex is not None:
-                        guided_decoding = GuidedDecodingParams(backend="outlines", regex=self.args.vllm_guided_decoding_regex)
-                    else:
-                        guided_decoding = None
-                        
-                    train_sampling_params = SamplingParams(
-                        temperature=self.args.temperature,
-                        max_tokens=self.max_completion_length,
-                        guided_decoding=guided_decoding,
-                        n=self.num_generations * self.repeat,
-                    )
-                    all_outputs = self.llm.generate(
-                        ordered_set_of_prompts, sampling_params=train_sampling_params, use_tqdm=False
-                    )
-                else:
-                    all_outputs = self.llm.generate(
-                        ordered_set_of_prompts, sampling_params=self.sampling_params, use_tqdm=False
-                    )
-                
-                completion_ids = []
-                for outputs in all_outputs:
-                    for output in outputs.outputs:
-                        completion_ids.append(output.token_ids)
-                        
-                # edit
-                if self.args.allocation:
-                    prompt_ids = torch.repeat_interleave(prompt_ids, repeats=self.repeat,dim=0)
-                    prompt_mask = torch.repeat_interleave(prompt_mask, repeats=self.repeat,dim=0)
-                    prompts = [ x for num in prompts for x in [ num ] * self.repeat ] 
-                    prompts_text = [ x for num in prompts_text for x in [ num ] * self.repeat ]
-            else:
-                if self.args.allocation:
-                    self.repeat = int(1 / (1-self.args.pruning))
-                    prompt_ids = torch.repeat_interleave(prompt_ids, repeats=self.repeat,dim=0)
-                    prompt_mask = torch.repeat_interleave(prompt_mask, repeats=self.repeat,dim=0)
-                    prompts = [ x for num in prompts for x in [ num ] * self.repeat ] 
-                    prompts_text = [ x for num in prompts_text for x in [ num ] * self.repeat ] 
-                    completion_ids = [None] * len(all_prompts_text) * self.repeat
-                else:
-                    completion_ids = [None] * len(all_prompts_text)
-            # Broadcast the completions from the main process to all processes, ensuring each process receives its
-            # corresponding slice.
-            completion_ids = broadcast_object_list(completion_ids, from_process=0)
-            process_slice = slice(
-                self.accelerator.process_index * len(prompts),
-                (self.accelerator.process_index + 1) * len(prompts),
+            self, inputs: dict[str, Union[torch.Tensor, Any]]
+        ) -> dict[str, Union[torch.Tensor, Any]]:
+            
+            device = self.accelerator.device
+            prompts = [x["prompt"] if isinstance(x, dict) else x[0] for x in inputs]
+            prompts_text = [maybe_apply_chat_template(example, self.processing_class)["prompt"] for example in inputs]
+            
+            prompt_inputs = self.processing_class(
+                prompts_text, return_tensors="pt", padding=True, padding_side="left", add_special_tokens=False
             )
-            completion_ids = completion_ids[process_slice]
+            prompt_inputs = super()._prepare_inputs(prompt_inputs)
+            prompt_ids, prompt_mask = prompt_inputs["input_ids"], prompt_inputs["attention_mask"]
 
-            # Pad the completions, and concatenate them with the prompts
-            completion_ids = [torch.tensor(ids, device=device) for ids in completion_ids]
-            completion_ids = pad(completion_ids, padding_value=self.processing_class.pad_token_id)
-            prompt_completion_ids = torch.cat([prompt_ids, completion_ids], dim=1)
-        else:
-            # Regular generation path
-            with unwrap_model_for_generation(self.model, self.accelerator) as unwrapped_model:
-                prompt_completion_ids = unwrapped_model.generate(
-                    prompt_ids, attention_mask=prompt_mask, generation_config=self.generation_config
-                )
+            if self.max_prompt_length is not None:
+                prompt_ids = prompt_ids[:, -self.max_prompt_length :]
+                prompt_mask = prompt_mask[:, -self.max_prompt_length :]
+            # Generate completions using either vLLM or regular generation
+            if self.args.use_vllm:
+                # First, have main process load weights if needed
+                if self.state.global_step != self._last_loaded_step:
+                    self._move_model_to_vllm()
+                    self._last_loaded_step = self.state.global_step
 
-            # Compute prompt length and extract completion ids
-            prompt_length = prompt_ids.size(1)
-            prompt_ids = prompt_completion_ids[:, :prompt_length]
-            completion_ids = prompt_completion_ids[:, prompt_length:]
-
-        # Mask everything after the first EOS token
-        is_eos = completion_ids == self.processing_class.eos_token_id
-        eos_idx = torch.full((is_eos.size(0),), is_eos.size(1), dtype=torch.long, device=device)
-        eos_idx[is_eos.any(dim=1)] = is_eos.int().argmax(dim=1)[is_eos.any(dim=1)]
-        sequence_indices = torch.arange(is_eos.size(1), device=device).expand(is_eos.size(0), -1)
-        completion_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()
-        completion_mask_for_metric = (sequence_indices <= eos_idx.unsqueeze(1)).int()
-
-        # Concatenate prompt_mask with completion_mask for logit computation
-        attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B, P+C)
-
-        logits_to_keep = completion_ids.size(1)  # we only need to compute the logits for the completion tokens
-
-
-        # Decode the generated completions
-        completions_text = self.processing_class.batch_decode(completion_ids, skip_special_tokens=True)
-        if is_conversational(inputs[0]):
-            completions = []
-            for prompt, completion in zip(prompts, completions_text):
-                bootstrap = prompt.pop()["content"] if prompt[-1]["role"] == "assistant" else ""
-                completions.append([{"role": "assistant", "content": bootstrap + completion}])
-        else:
-            completions = completions_text
-
-        rewards_per_func = torch.zeros(len(prompts), len(self.reward_funcs), device=device)
-        for i, (reward_func, reward_processing_class) in enumerate(
-            zip(self.reward_funcs, self.reward_processing_classes)
-        ):
-            if isinstance(reward_func, nn.Module):  # Module instead of PretrainedModel for compat with compiled models
-                if is_conversational(inputs[0]):
-                    messages = [{"messages": p + c} for p, c in zip(prompts, completions)]
-                    texts = [apply_chat_template(x, reward_processing_class)["text"] for x in messages]
+                # Generate completions using vLLM: gather all prompts and use them in a single call in the main process
+                all_prompts_text = gather_object(prompts_text)
+                if self.accelerator.is_main_process:
+                    # Since 'prompts' contains 'num_generations' duplicates, we first take unique prompts, and generate
+                    # num_generations outputs for each one. This is faster than generating outputs for each duplicate
+                    # prompt individually.
+                    ordered_set_of_prompts = list(dict.fromkeys(all_prompts_text))
+                    
+                    # edit
+                    if self.args.allocation:
+                        self.repeat = math.ceil(1 / (1 - self.args.pruning))
+                        if self.args.vllm_guided_decoding_regex is not None:
+                            guided_decoding = GuidedDecodingParams(backend="outlines", regex=self.args.vllm_guided_decoding_regex)
+                        else:
+                            guided_decoding = None
+                            
+                        train_sampling_params = SamplingParams(
+                            temperature=self.args.temperature,
+                            max_tokens=self.max_completion_length,
+                            guided_decoding=guided_decoding,
+                            n=self.num_generations * self.repeat,
+                        )
+                        all_outputs = self.llm.generate(
+                            ordered_set_of_prompts, sampling_params=train_sampling_params, use_tqdm=False
+                        )
+                    else:
+                        all_outputs = self.llm.generate(
+                            ordered_set_of_prompts, sampling_params=self.sampling_params, use_tqdm=False
+                        )
+                    
+                    completion_ids = []
+                    for outputs in all_outputs:
+                        for output in outputs.outputs:
+                            completion_ids.append(output.token_ids)
+                            
+                    # edit
+                    if self.args.allocation:
+                        prompt_ids = torch.repeat_interleave(prompt_ids, repeats=self.repeat, dim=0)
+                        prompt_mask = torch.repeat_interleave(prompt_mask, repeats=self.repeat, dim=0)
+                        prompts = [ x for num in prompts for x in [ num ] * self.repeat ] 
+                        prompts_text = [ x for num in prompts_text for x in [ num ] * self.repeat ]
                 else:
-                    texts = [p + c for p, c in zip(prompts, completions)]
-                reward_inputs = reward_processing_class(
-                    texts, return_tensors="pt", padding=True, padding_side="right", add_special_tokens=False
+                    if self.args.allocation:
+                        self.repeat = math.ceil(1 / (1 - self.args.pruning))  # ceil関数に変更
+                        prompt_ids = torch.repeat_interleave(prompt_ids, repeats=self.repeat, dim=0)
+                        prompt_mask = torch.repeat_interleave(prompt_mask, repeats=self.repeat, dim=0)
+                        prompts = [ x for num in prompts for x in [ num ] * self.repeat ] 
+                        prompts_text = [ x for num in prompts_text for x in [ num ] * self.repeat ] 
+                        completion_ids = [None] * len(all_prompts_text) * self.repeat
+                    else:
+                        completion_ids = [None] * len(all_prompts_text)
+                # Broadcast the completions from the main process to all processes, ensuring each process receives its
+                # corresponding slice.
+                completion_ids = broadcast_object_list(completion_ids, from_process=0)
+                process_slice = slice(
+                    self.accelerator.process_index * len(prompts),
+                    (self.accelerator.process_index + 1) * len(prompts),
                 )
-                reward_inputs = super()._prepare_inputs(reward_inputs)
-                with torch.inference_mode():
-                    rewards_per_func[:, i] = reward_func(**reward_inputs).logits[:, 0]  # Shape (B*G,)
+                completion_ids = completion_ids[process_slice]
+
+                # Pad the completions, and concatenate them with the prompts
+                completion_ids = [torch.tensor(ids, device=device) for ids in completion_ids]
+                completion_ids = pad(completion_ids, padding_value=self.processing_class.pad_token_id)
+                prompt_completion_ids = torch.cat([prompt_ids, completion_ids], dim=1)
             else:
-                # Repeat all input columns (but "prompt" and "completion") to match the number of generations
-                keys = [key for key in inputs[0] if key not in ["prompt", "completion"]]
-                reward_kwargs = {key: [example[key] for example in inputs] for key in keys}
-                # edit
-                if self.args.allocation:
-                    reward_kwargs['question'] = [ x for num in reward_kwargs['question'] for x in [ num ] * self.repeat ] 
-                    reward_kwargs['solution'] = [ x for num in reward_kwargs['solution'] for x in [ num ] * self.repeat ] 
-                output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
-                rewards_per_func[:, i] = torch.tensor(output_reward_func, dtype=torch.float32, device=device)
+                # Regular generation path
+                with unwrap_model_for_generation(self.model, self.accelerator) as unwrapped_model:
+                    prompt_completion_ids = unwrapped_model.generate(
+                        prompt_ids, attention_mask=prompt_mask, generation_config=self.generation_config
+                    )
 
-        # Gather the reward per function: this part is crucial, because the rewards are normalized per group and the
-        # completions may be distributed across processes
-        rewards_per_func = gather(rewards_per_func)
+                # Compute prompt length and extract completion ids
+                prompt_length = prompt_ids.size(1)
+                prompt_ids = prompt_completion_ids[:, :prompt_length]
+                completion_ids = prompt_completion_ids[:, prompt_length:]
 
-        # Apply weights to each reward function's output and sum
-        rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).sum(dim=1)
+            # Mask everything after the first EOS token
+            is_eos = completion_ids == self.processing_class.eos_token_id
+            eos_idx = torch.full((is_eos.size(0),), is_eos.size(1), dtype=torch.long, device=device)
+            eos_idx[is_eos.any(dim=1)] = is_eos.int().argmax(dim=1)[is_eos.any(dim=1)]
+            sequence_indices = torch.arange(is_eos.size(1), device=device).expand(is_eos.size(0), -1)
+            completion_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()
+            completion_mask_for_metric = (sequence_indices <= eos_idx.unsqueeze(1)).int()
 
-        # ======================================================
-        # Reinforce-Rej フィルタリング処理開始
-        # ======================================================
-        if self.args.reinforce_variant == "rej":
+            # Concatenate prompt_mask with completion_mask for logit computation
+            attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B, P+C)
 
-            mode = "train" if self.model.training else "eval"  # 追加   
-            current_rank = getattr(self.accelerator, 'local_process_index', 0)
-            print(f"[Rank {current_rank}] Pre-filter rewards shape: {rewards.shape}, num_generations: {self.num_generations}")
+            logits_to_keep = completion_ids.size(1)  # we only need to compute the logits for the completion tokens
 
-            # 実バッチサイズを動的に計算（rewardsの要素数から逆算）
-            real_batch_size = rewards.size(0) // self.num_generations
-            if rewards.size(0) % self.num_generations != 0:
-                print(f"[Rank {current_rank}] Invalid rewards shape: {rewards.shape} for num_generations={self.num_generations}")
-                return inputs
+            # Decode the generated completions
+            completions_text = self.processing_class.batch_decode(completion_ids, skip_special_tokens=True)
+            if is_conversational(inputs[0]):
+                completions = []
+                for prompt, completion in zip(prompts, completions_text):
+                    bootstrap = prompt.pop()["content"] if prompt[-1]["role"] == "assistant" else ""
+                    completions.append([{"role": "assistant", "content": bootstrap + completion}])
+            else:
+                completions = completions_text
 
-            print(f"[Rank {current_rank}] Calculated real batch size: {real_batch_size}")
+            rewards_per_func = torch.zeros(len(prompts), len(self.reward_funcs), device=device)
+            for i, (reward_func, reward_processing_class) in enumerate(
+                zip(self.reward_funcs, self.reward_processing_classes)
+            ):
+                if isinstance(reward_func, nn.Module):  # Module instead of PretrainedModel for compat with compiled models
+                    if is_conversational(inputs[0]):
+                        messages = [{"messages": p + c} for p, c in zip(prompts, completions)]
+                        texts = [apply_chat_template(x, reward_processing_class)["text"] for x in messages]
+                    else:
+                        texts = [p + c for p, c in zip(prompts, completions)]
+                    reward_inputs = reward_processing_class(
+                        texts, return_tensors="pt", padding=True, padding_side="right", add_special_tokens=False
+                    )
+                    reward_inputs = super()._prepare_inputs(reward_inputs)
+                    with torch.inference_mode():
+                        rewards_per_func[:, i] = reward_func(**reward_inputs).logits[:, 0]  # Shape (B*G,)
+                else:
+                    # Repeat all input columns (but "prompt" and "completion") to match the number of generations
+                    keys = [key for key in inputs[0] if key not in ["prompt", "completion"]]
+                    reward_kwargs = {key: [example[key] for example in inputs] for key in keys}
+                    # edit
+                    if self.args.allocation:
+                        reward_kwargs['question'] = [ x for num in reward_kwargs['question'] for x in [ num ] * self.repeat ] 
+                        reward_kwargs['solution'] = [ x for num in reward_kwargs['solution'] for x in [ num ] * self.repeat ] 
+                    output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
+                    rewards_per_func[:, i] = torch.tensor(output_reward_func, dtype=torch.float32, device=device)
 
+            # Gather the reward per function: this part is crucial, because the rewards are normalized per group and the
+            # completions may be distributed across processes
+            rewards_per_func = gather(rewards_per_func)
 
+            # Apply weights to each reward function's output and sum
+            rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).sum(dim=1)
 
-            try:
-                # 報酬を (real_batch_size, num_generations) に整形
-                grouped_rewards = rewards.view(real_batch_size, self.num_generations)
-                print(f"[Rank {current_rank}] Grouped rewards shape: {grouped_rewards.shape}")
-
-                # フィルタリング条件
-                all_incorrect = (grouped_rewards == -1).all(dim=1)
-                all_correct = (grouped_rewards == 1).all(dim=1)
-                keep_mask = ~(all_incorrect | all_correct)
-
-                print(f"[Rank {current_rank}] Keeping {keep_mask.sum().item()}/{len(keep_mask)} prompts")
-
-                # プロンプト単位でフィルタリング適用
-                keep_indices = keep_mask.nonzero().squeeze(-1)
-                prompt_completion_ids = prompt_completion_ids[keep_indices]
-                prompt_ids = prompt_ids[keep_indices]
-                prompt_mask = prompt_mask[keep_indices]
+            # ======================================================
+            # Reinforce-Rej フィルタリング処理開始（修正版）
+            # ======================================================
+            if self.args.reinforce_variant == "rej":
+                import torch.distributed as dist
                 
-                # 生成物は num_generations 倍の数があるため特別処理
-                completion_ids = completion_ids[keep_indices.repeat_interleave(self.num_generations)]
-                completion_mask = completion_mask[keep_indices.repeat_interleave(self.num_generations)]
-                rewards = rewards[keep_indices.repeat_interleave(self.num_generations)]
+                # 訓練モードとランクを取得
+                mode = "train" if self.model.training else "eval"
+                current_rank = getattr(self.accelerator, 'local_process_index', 0)
+                
+                # 初期形状と整合性チェック
+                try:
+                    # バッチサイズを動的に計算
+                    if hasattr(self.args, 'allocation') and self.args.allocation:
+                        # allocation モードの場合は repeat を考慮
+                        real_batch_size = rewards.size(0) // (self.num_generations * self.repeat)
+                    else:
+                        real_batch_size = rewards.size(0) // self.num_generations
+                    
+                    if rewards.size(0) % (self.num_generations * (self.repeat if hasattr(self.args, 'allocation') and self.args.allocation else 1)) != 0:
+                        print(f"[Rank {current_rank}] Warning: rewards shape {rewards.shape} is not divisible by expected factor")
+                        # エラーを発生させず続行する
+                    
+                    # フィルタリング処理前の形状をログ
+                    print(f"[Rank {current_rank}] Pre-filter: rewards shape={rewards.shape}, real_batch_size={real_batch_size}")
+                    
+                    # 報酬を適切な形状に整形 (allocation モードを考慮)
+                    if hasattr(self.args, 'allocation') and self.args.allocation:
+                        grouped_rewards = rewards.view(real_batch_size, self.num_generations * self.repeat)
+                    else:
+                        grouped_rewards = rewards.view(real_batch_size, self.num_generations)
+                    
+                    # フィルタリング条件を計算
+                    # -1と1のみの特別な報酬値を使用する場合
+                    all_incorrect = (grouped_rewards == -1).all(dim=1)
+                    all_correct = (grouped_rewards == 1).all(dim=1)
+                    keep_mask = ~(all_incorrect | all_correct)
+                    
+                    # 全プロセスで keep_mask の合計を同期
+                    if dist.is_initialized():
+                        keep_count = keep_mask.sum()
+                        global_keep_count = torch.tensor([keep_count], device=device)
+                        dist.all_reduce(global_keep_count, op=dist.ReduceOp.SUM)
+                        print(f"[Rank {current_rank}] Global keep count: {global_keep_count.item()}")
+                        
+                        # 全プロセスでフィルタが強すぎる場合の対処
+                        if global_keep_count.item() < real_batch_size * dist.get_world_size() * 0.1:  # 10%未満が残る場合
+                            print(f"[Rank {current_rank}] Too aggressive filtering, using original inputs")
+                            return inputs
+                    
+                    # プロンプト単位でフィルタリングを適用
+                    keep_indices = keep_mask.nonzero().squeeze(-1)
+                    
+                    # 空の場合のチェック
+                    if keep_indices.numel() == 0:
+                        print(f"[Rank {current_rank}] No samples remained after filtering, using original inputs")
+                        return inputs
+                    
+                    if keep_indices.dim() == 0:
+                        # 単一のインデックスの場合、適切な形状に変換
+                        keep_indices = keep_indices.unsqueeze(0)
+                    
+                    print(f"[Rank {current_rank}] Keeping {keep_indices.shape[0]}/{real_batch_size} prompts")
+                    
+                    # テンソルサイズ確認
+                    print(f"[Rank {current_rank}] Tensor sizes - prompt_ids: {prompt_ids.shape}, completion_ids: {completion_ids.shape}")
+                    
+                    # プロンプトIDs、マスク、完了IDsに適用
+                    # 全ての数値を揃える
+                    try:
+                        filtered_prompt_indices = []
+                        for idx in keep_indices:
+                            # この例では num_generations 倍展開する（自身のケースに合わせて調整）
+                            if hasattr(self.args, 'allocation') and self.args.allocation:
+                                start_idx = idx.item() * self.num_generations * self.repeat
+                                for j in range(self.num_generations * self.repeat):
+                                    filtered_prompt_indices.append(start_idx + j)
+                            else:
+                                start_idx = idx.item() * self.num_generations
+                                for j in range(self.num_generations):
+                                    filtered_prompt_indices.append(start_idx + j)
+                        
+                        # フィルタリング適用（順番に注意）
+                        filtered_prompt_indices = torch.tensor(filtered_prompt_indices, device=device)
+                        
+                        # 形状チェックとフィルタリング（サイズが合わない場合はエラー防止）
+                        prompt_completion_ids = prompt_completion_ids[filtered_prompt_indices] if filtered_prompt_indices.max() < prompt_completion_ids.shape[0] else prompt_completion_ids
+                        attention_mask = attention_mask[filtered_prompt_indices] if filtered_prompt_indices.max() < attention_mask.shape[0] else attention_mask
+                        
+                        prompt_ids = prompt_ids[filtered_prompt_indices] if filtered_prompt_indices.max() < prompt_ids.shape[0] else prompt_ids
+                        prompt_mask = prompt_mask[filtered_prompt_indices] if filtered_prompt_indices.max() < prompt_mask.shape[0] else prompt_mask
+                        
+                        completion_ids = completion_ids[filtered_prompt_indices] if filtered_prompt_indices.max() < completion_ids.shape[0] else completion_ids
+                        completion_mask = completion_mask[filtered_prompt_indices] if filtered_prompt_indices.max() < completion_mask.shape[0] else completion_mask
+                        
+                        rewards = rewards[filtered_prompt_indices] if filtered_prompt_indices.max() < rewards.shape[0] else rewards
+                        
+                        # メトリクスを記録
+                        self._metrics[mode]["filtered_all_incorrect"].append(all_incorrect.float().mean().item())
+                        self._metrics[mode]["filtered_all_correct"].append(all_correct.float().mean().item())
+                        self._metrics[mode]["filter_keep_rate"].append(keep_mask.float().mean().item())
+                        
+                    except IndexError as e:
+                        print(f"[Rank {current_rank}] Index error during filtering: {str(e)}")
+                        print(f"[Rank {current_rank}] Keep indices: min={keep_indices.min().item()}, max={keep_indices.max().item()}")
+                        print(f"[Rank {current_rank}] Tensor shapes after filtering - prompt_ids: {prompt_ids.shape}, completion_ids: {completion_ids.shape}")
+                        # エラー発生時は元の入力を返す
+                        return inputs
+                    
+                except Exception as e:
+                    import traceback
+                    print(f"[Rank {current_rank}] Exception during filtering: {str(e)}")
+                    print(traceback.format_exc())
+                    return inputs  # エラー発生時は元の入力を返す
+            
+            # 通常の報酬計算処理 (GRPO/Reinforce共通)
+            if hasattr(self.args, 'allocation') and self.args.allocation:
+                mean_grouped_rewards = rewards.view(-1, self.num_generations * self.repeat).mean(dim=1)
+                std_grouped_rewards = rewards.view(-1, self.num_generations * self.repeat).std(dim=1)
+                mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(self.num_generations * self.repeat, dim=0)
+                std_grouped_rewards = std_grouped_rewards.repeat_interleave(self.num_generations * self.repeat, dim=0)
+            else:
+                # view操作前にtensor形状の整合性をチェック
+                if rewards.numel() % self.num_generations != 0:
+                    # サイズが合わない場合は調整（フィルタリング後に発生する可能性がある）
+                    pad_size = self.num_generations - (rewards.numel() % self.num_generations)
+                    if pad_size < self.num_generations:
+                        rewards = torch.cat([rewards, torch.zeros(pad_size, device=device)])
+                
+                mean_grouped_rewards = rewards.view(-1, self.num_generations).mean(dim=1)
+                std_grouped_rewards = rewards.view(-1, self.num_generations).std(dim=1)
+                mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(self.num_generations, dim=0)
+                std_grouped_rewards = std_grouped_rewards.repeat_interleave(self.num_generations, dim=0)
 
-            except RuntimeError as e:
-                print(f"[Rank {current_rank}] Filtering failed: {str(e)}")
-                print(f"[Rank {current_rank}] Fallback to original inputs")
-                return inputs  # フィルタリング失敗時は入力をそのまま返す
+            # advantages計算前にサイズチェック
+            if rewards.size(0) != mean_grouped_rewards.size(0):
+                # サイズ不一致を修正（フィルタリング後に発生する可能性がある）
+                min_size = min(rewards.size(0), mean_grouped_rewards.size(0))
+                rewards = rewards[:min_size]
+                mean_grouped_rewards = mean_grouped_rewards[:min_size]
+                std_grouped_rewards = std_grouped_rewards[:min_size]
 
+            advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
 
+            # プロセススライスでの処理（分散学習時）
+            # フィルタリング後はサイズが変わっているため、単純なsliceではなく適切な範囲を取得
+            process_slice = slice(0, len(advantages))  # フィルタリング後はそのまま全て使用
+            advantages = advantages[process_slice]
+
+            # REINFORCEメトリクス記録
+            mode = "eval" if self.control.should_evaluate else "train"
+            # L.830付近のREINFORCE処理部を以下のように修正
+            if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
+                ### fix 2025-05-01
+                if isinstance(inputs, list):
+                    inputs_dict = {"inputs": inputs}
+                    rewards = inputs_dict.get("rewards", advantages)
+                else:
+                    rewards = inputs.get("rewards", advantages)
+                
+                if rewards.dim() == 1:
+                    # 代替手段1: 事前計算されたlog_probsを使用
+                    if "log_probs" in inputs:
+                        rewards = rewards.unsqueeze(-1).expand(-1, inputs["log_probs"].size(1))
+                    # 代替手段2: 生成結果の長さを使用
+                    else:
+                        seq_len = completion_ids.size(1)
+                        rewards = rewards.unsqueeze(-1).expand(-1, seq_len)
+                        self._metrics[mode]["warning"].append("used_completion_length_for_expansion")
+                
+                # メトリクス記録（元の報酬値で計算）
+                flat_rewards = rewards.flatten()  # メトリクス計算用に平坦化
+                self._metrics[mode]["reward_mean"].append(flat_rewards.mean().item())
+                self._metrics[mode]["reward_std"].append(flat_rewards.std().item())
+                self._metrics[mode]["reward_min"].append(flat_rewards.min().item())
+                self._metrics[mode]["reward_max"].append(flat_rewards.max().item())
+            
+                # REINFORCE/REINFORCE++の処理
+                if self.args.reinforce_variant == "plusplus":
+                    # バッチ内で正規化（形状を維持）
+                    normalized_rewards = self._normalize_rewards(rewards)
+                    beta = self.args.reinforce_pp_beta
+                    combined_rewards = (1 - beta) * rewards + beta * normalized_rewards
+                else:  # vanilla REINFORCE
+                    combined_rewards = rewards.clone()
+                
+                # スケーリング適用
+                if self.args.use_reward_scaling:
+                    combined_rewards = combined_rewards * self.args.reward_scaling_factor
+                    
+                # プロセススライス適用（フィルタリング後は全て使用）
+                combined_rewards = combined_rewards[process_slice]
+            else:
+                # GRPOの場合は従来通りadvantagesを使用
+                combined_rewards = None
+
+            mode = "eval" if self.control.should_evaluate else "train"
+            # edit
+            if hasattr(self.args, 'pruning') and self.args.pruning != 0 and mode == 'train':
+                
+                pruning_rate = self.args.pruning
+                k = int(advantages.shape[0] * pruning_rate)
+                
+                if k > 0:  # バッチが空でないことを確認
+                    self._metrics[mode]["pruning_rate"].append(pruning_rate)
+                    
+                    assert advantages.dim() == 1, "advantages It must be a one-dimensional tensen."
+        
+                    abs_advantages = torch.abs(advantages)
+        
+                    if self.args.metric == 'largest':
+                        _, min_indices = torch.topk(abs_advantages, k=k, largest=True)  
+                    elif self.args.metric == 'smallest':
+                        _, min_indices = torch.topk(abs_advantages, k=k, largest=False)  
+                    elif self.args.metric == 'random':
+                        min_indices = torch.randperm(advantages.shape[0])[:k]
+                    else:
+                        raise NotImplementedError
+                    # Generate mask
+                    mask = torch.ones_like(advantages, dtype=torch.bool)
+                    mask[min_indices] = False  
+                    # Completion Pruning
+                    advantages = advantages[mask]
+                    prompt_completion_ids = prompt_completion_ids[mask]
+                    attention_mask = attention_mask[mask]
+                    prompt_ids = prompt_ids[mask]
+                    prompt_mask = prompt_mask[mask]
+                    completion_ids = completion_ids[mask]
+                    completion_mask = completion_mask[mask]
+            
             # 空バッチチェック
-            if len(prompt_completion_ids) == 0:
-                print("Warning: All samples filtered out, returning dummy data")
-                return self._create_dummy_inputs(inputs)
-
-
-            # フィルタリング後の統計を記録
-            self._metrics[mode]["filtered_all_incorrect"].append(all_incorrect.float().mean().item())
-            self._metrics[mode]["filtered_all_correct"].append(all_correct.float().mean().item())
-
-
-
-        # 通常の報酬計算処理 (GRPO/Reinforce共通)
-        if self.args.allocation:
-            mean_grouped_rewards = rewards.view(-1, self.num_generations * self.repeat).mean(dim=1)
-            std_grouped_rewards = rewards.view(-1, self.num_generations * self.repeat).std(dim=1)
-            mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(self.num_generations * self.repeat, dim=0)
-            std_grouped_rewards = std_grouped_rewards.repeat_interleave(self.num_generations * self.repeat, dim=0)
-        else:
-            mean_grouped_rewards = rewards.view(-1, self.num_generations).mean(dim=1)
-            std_grouped_rewards = rewards.view(-1, self.num_generations).std(dim=1)
-            mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(self.num_generations, dim=0)
-            std_grouped_rewards = std_grouped_rewards.repeat_interleave(self.num_generations, dim=0)
-
-
-        advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
-
-        # Slice to keep only the local part of the data
-        process_slice = slice(
-            self.accelerator.process_index * len(prompts),
-            (self.accelerator.process_index + 1) * len(prompts),
-        )
-        advantages = advantages[process_slice]
-
-
-        # REINFORCEメトリクス記録
-        mode = "eval" if self.control.should_evaluate else "train"
-        # L.830付近のREINFORCE処理部を以下のように修正
-        if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
-            ### fix 2025-05-01
-            if isinstance(inputs, list):
-                inputs_dict = {"inputs": inputs}
-                rewards = inputs_dict.get("rewards", advantages)
-            else:
-                rewards = inputs.get("rewards", advantages)
-            
-            if rewards.dim() == 1:
-                # 代替手段1: 事前計算されたlog_probsを使用
-                if "log_probs" in inputs:
-                    rewards = rewards.unsqueeze(-1).expand(-1, inputs["log_probs"].size(1))
-                # 代替手段2: 生成結果の長さを使用
+            if advantages.shape[0] == 0:
+                print(f"Warning: Empty batch after processing. Creating dummy data.")
+                # ダミーデータ作成関数がある場合はそれを使用
+                if hasattr(self, '_create_dummy_inputs'):
+                    return self._create_dummy_inputs(inputs)
                 else:
-                    seq_len = completion_ids.size(1)
-                    rewards = rewards.unsqueeze(-1).expand(-1, seq_len)
-                    self._metrics[mode]["warning"].append("used_completion_length_for_expansion")
+                    # ダミーデータを返す簡易な対応
+                    return inputs
             
-            # メトリクス記録（元の報酬値で計算）
-            flat_rewards = rewards.flatten()  # メトリクス計算用に平坦化
-            self._metrics[mode]["reward_mean"].append(flat_rewards.mean().item())
-            self._metrics[mode]["reward_std"].append(flat_rewards.std().item())
-            self._metrics[mode]["reward_min"].append(flat_rewards.min().item())
-            self._metrics[mode]["reward_max"].append(flat_rewards.max().item())
-        
-            # REINFORCE/REINFORCE++の処理
-            if self.args.reinforce_variant == "plusplus":
-                # バッチ内で正規化（形状を維持）
-                normalized_rewards = self._normalize_rewards(rewards)
-                beta = self.args.reinforce_pp_beta
-                combined_rewards = (1 - beta) * rewards + beta * normalized_rewards
-            else:  # vanilla REINFORCE
-                combined_rewards = rewards.clone()
-            
-            # スケーリング適用
-            if self.args.use_reward_scaling:
-                combined_rewards = combined_rewards * self.args.reward_scaling_factor
-                
-            # プロセススライス適用
-            combined_rewards = combined_rewards[process_slice]
-        else:
-            # GRPOの場合は従来通りadvantagesを使用
-            combined_rewards = None
-
-        
-
-        mode = "eval" if self.control.should_evaluate else "train"
-        # edit
-        if self.args.pruning != 0 and mode == 'train':
-            
-            pruning_rate=self.args.pruning
-            k = int(advantages.shape[0] * pruning_rate)
-
-            self._metrics[mode]["pruning_rate"].append(pruning_rate)
-            
-            assert advantages.dim() == 1, "advantages It must be a one-dimensional tensen."
-
-            abs_advantages = torch.abs(advantages)
-
-            if self.args.metric == 'largest':
-                _, min_indices = torch.topk(abs_advantages, k=k, largest=True)  
-            elif self.args.metric == 'smallest':
-                _, min_indices = torch.topk(abs_advantages, k=k, largest=False)  
-            elif self.args.metric == 'random':
-                min_indices = torch.randperm(advantages.shape[0])[:k]
-            else:
-                raise NotImplementedError
-            # Generate mask
-            mask = torch.ones_like(advantages, dtype=torch.bool)
-            mask[min_indices] = False  
-            # Completion Pruning
-            advantages=advantages[mask]
-            prompt_completion_ids = prompt_completion_ids[mask]
-            attention_mask = attention_mask[mask]
-            prompt_ids=prompt_ids[mask]
-            prompt_mask=prompt_mask[mask]
-            completion_ids=completion_ids[mask]
-            completion_mask=completion_mask[mask]
-            
-        
-        if advantages.shape[0] != 0:
-            with torch.no_grad():
-                # When using num_iterations == 1, old_per_token_logps == per_token_logps, so we can skip it's
-                # computation here, and use per_token_logps.detach() instead.
-                if self.num_iterations > 1:
-                    old_per_token_logps = self._get_per_token_logps(
-                        self.model, prompt_completion_ids, attention_mask, logits_to_keep
-                    )
-                else:
-                    old_per_token_logps = None
-                if self.beta == 0.0:
-                    ref_per_token_logps = None
-                elif self.ref_model is not None:
-                    ref_per_token_logps = self._get_per_token_logps(
-                        self.ref_model, prompt_completion_ids, attention_mask, logits_to_keep
-                    )
-                else:
-                    with self.accelerator.unwrap_model(self.model).disable_adapter():
-                        ref_per_token_logps = self._get_per_token_logps(
+            try:
+                with torch.no_grad():
+                    # When using num_iterations == 1, old_per_token_logps == per_token_logps, so we can skip it's
+                    # computation here, and use per_token_logps.detach() instead.
+                    if self.num_iterations > 1:
+                        old_per_token_logps = self._get_per_token_logps(
                             self.model, prompt_completion_ids, attention_mask, logits_to_keep
                         )
-        else:
-            old_per_token_logps = None
-            ref_per_token_logps = None
+                    else:
+                        old_per_token_logps = None
+                    if self.beta == 0.0:
+                        ref_per_token_logps = None
+                    elif self.ref_model is not None:
+                        ref_per_token_logps = self._get_per_token_logps(
+                            self.ref_model, prompt_completion_ids, attention_mask, logits_to_keep
+                        )
+                    else:
+                        # ProcessGroupの終了時にエラーが出る可能性があるため、try-exceptで囲む
+                        try:
+                            with self.accelerator.unwrap_model(self.model).disable_adapter():
+                                ref_per_token_logps = self._get_per_token_logps(
+                                    self.model, prompt_completion_ids, attention_mask, logits_to_keep
+                                )
+                        except RuntimeError as e:
+                            print(f"Error in disable_adapter: {e}")
+                            # エラー時のフォールバック
+                            ref_per_token_logps = None
+            except Exception as e:
+                import traceback
+                print(f"Error during logp computation: {str(e)}")
+                print(traceback.format_exc())
+                old_per_token_logps = None
+                ref_per_token_logps = None
 
-        # Log the metrics
-        mode = "eval" if self.control.should_evaluate else "train"
+            # Log the metrics
+            mode = "eval" if self.control.should_evaluate else "train"
 
-        completion_mask_for_metric = self.accelerator.gather_for_metrics(completion_mask_for_metric.sum(1)).float().mean().item()
+            # メトリック計算前にテンソルサイズをチェック
+            if completion_mask_for_metric.numel() > 0:
+                try:
+                    completion_mask_for_metric = self.accelerator.gather_for_metrics(completion_mask_for_metric.sum(1)).float().mean().item()
+                    self._metrics[mode]["completion_length"].append(completion_mask_for_metric)
+                except Exception as e:
+                    print(f"Error in metrics logging: {e}")
+                    # メトリックログのエラーは無視して続行
             
-        self._metrics[mode]["completion_length"].append(completion_mask_for_metric)
+            # 報酬関連のメトリクス
+            try:
+                reward_per_func = rewards_per_func.mean(0)
+                for i, reward_func in enumerate(self.reward_funcs):
+                    if isinstance(reward_func, nn.Module):  # Module instead of PretrainedModel for compat with compiled models
+                        reward_func_name = reward_func.config._name_or_path.split("/")[-1]
+                    else:
+                        reward_func_name = reward_func.__name__
+                    self._metrics[mode][f"rewards/{reward_func_name}"].append(reward_per_func[i].item())
+        
+                self._metrics[mode]["reward"].append(rewards.mean().item())
+                #### fix for reinforce_rej
+                if self.args.reinforce_variant == "rej" and 'filtered_all_incorrect' in self._metrics[mode] and 'filtered_all_correct' in self._metrics[mode]:
+                    self._metrics[mode]["filter_rate"].append(
+                        (self._metrics[mode]["filtered_all_incorrect"][-1] + self._metrics[mode]["filtered_all_correct"][-1])
+                    )
+        
+                self._metrics[mode]["reward_std"].append(std_grouped_rewards.mean().item())
+            except Exception as e:
+                print(f"Error in reward metrics logging: {e}")
+                # メトリックログのエラーは無視して続行
 
-        reward_per_func = rewards_per_func.mean(0)
-        for i, reward_func in enumerate(self.reward_funcs):
-            if isinstance(reward_func, nn.Module):  # Module instead of PretrainedModel for compat with compiled models
-                reward_func_name = reward_func.config._name_or_path.split("/")[-1]
-            else:
-                reward_func_name = reward_func.__name__
-            self._metrics[mode][f"rewards/{reward_func_name}"].append(reward_per_func[i].item())
-
-        self._metrics[mode]["reward"].append(rewards.mean().item())
-        #### fix for reinforce_rej
-        if self.args.reinforce_variant == "rej":
-            self._metrics[mode]["filter_rate"].append(
-                (all_incorrect.float().mean().item() + all_correct.float().mean().item())
-            )
-
-        self._metrics[mode]["reward_std"].append(std_grouped_rewards.mean().item())
-
-        if (
-            self.log_completions
-            and self.state.global_step % self.args.logging_steps == 0
-            and "wandb" in self.args.report_to
-        ):
-            import pandas as pd
-
-            # For logging
-            table = {
-                "step": [str(self.state.global_step)] * len(rewards),
-                "prompt": gather_object(prompts_text),
-                "completion": gather_object(completions_text),
-                "reward": rewards.tolist(),
-            }
-            
-            #### 追加 2025-05-01
-            ### print({k: len(v) for k, v in table.items()})
-            max_len = max(len(v) for v in table.values())
-            table = {k: v if len(v) == max_len else v + [None]*(max_len-len(v)) for k, v in table.items()}
-            df = pd.DataFrame(table)
-
-            if wandb.run is not None and self.accelerator.is_main_process:
-                wandb.log({"completions": wandb.Table(dataframe=df)})
-
-        return {
-            "prompt_ids": prompt_ids,
-            "prompt_mask": prompt_mask,
-            "completion_ids": completion_ids,
-            "completion_mask": completion_mask,
-            "old_per_token_logps": old_per_token_logps,
-            "ref_per_token_logps": ref_per_token_logps,
-            "advantages": advantages,
-            "rewards": rewards if hasattr(self.args, 'reinforce_variant') else None,          
-        }
+            # Wandbによるログ出力
+            if (
+                self.log_completions
+                and self.state.global_step % self.args.logging_steps == 0
+                and "wandb" in self.args.report_to
+            ):
+                try:
+                    import pandas as pd
+                    import wandb
+        
+                    # For logging
+                    table = {
+                        "step": [str(self.state.global_step)] * len(rewards),
+                        "prompt": gather_object(prompts_text),
+                        "completion": gather_object(completions_text),
+                        "reward": rewards.tolist(),
+                    }
+                    
+                    # 長さのチェックと調整
+                    max_len = max(len(v) for v in table.values())
+                    table = {k: v if len(v) == max_len else v + [None]*(max_len-len(v)) for k, v in table.items()}
+                    df = pd.DataFrame(table)
+        
+                    if wandb.run is not None and self.accelerator.is_main_process:
+                        wandb.log({"completions": wandb.Table(dataframe=df)})
+                except Exception as e:
+                    print(f"Error in wandb logging: {e}")
+                    # wandbログのエラーは無視して続行
 
 
     def _create_dummy_inputs(self, original_inputs):
