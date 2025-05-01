@@ -682,7 +682,7 @@ class GRPOTrainer(Trainer):
                 
                 # edit
                 if self.args.allocation:
-                    self.repeat = int(1 / (1-self.args.pruning))
+                    self.repeat = math.ceil(1 / (1 - self.args.pruning))
                     if self.args.vllm_guided_decoding_regex is not None:
                         guided_decoding = GuidedDecodingParams(backend="outlines", regex=self.args.vllm_guided_decoding_regex)
                     else:
