@@ -13,14 +13,14 @@
 
 ### We have just prepared prototypes of RAFT vanilla and RAFT++, so we can use them (2025-04-27).
 
-### We have just prepared prototypes of Reinforce vanilla, Reinforce++, so we can use them (2025-05-01).
+### We have just prepared prototypes of Reinforce vanilla, Reinforce++ and Reinforce rej, so we can use them (2025-05-01).
 
 ---
 
 ### GRPO, CPPO, DRGRPO, DRGRPO+CPPO with gsm
 use configs.py, grpo_gsm.py, grpo_trainer_gsm.py
 
-### RAFTvanilla, RAFT++, REINFORCEvanilla, REINFORCE++ with gsm
+### RAFTvanilla, RAFT++, REINFORCEvanilla, REINFORCE++, REINFORCErej with gsm
 use configs.py, grpo_gsm_raft.py, grpo_trainer_gsm_raft.py
 
 ---
