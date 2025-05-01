@@ -792,49 +792,53 @@ class GRPOTrainer(Trainer):
         # Apply weights to each reward function's output and sum
         rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).sum(dim=1)
 
-
-        # _generate_and_score_completions メソッド内
+        # ======================================================
+        # Reinforce-Rej フィルタリング処理開始
+        # ======================================================
         if self.args.reinforce_variant == "rej":
 
-            # デバッグ用：形状確認
-            print(f"Initial rewards shape: {rewards.shape}")
-            print(f"num_generations: {self.num_generations}")
-            
-            # 正しいバッチサイズ計算（プロンプト数）
-            batch_size = len(prompts)  # 元のプロンプト数
-            print(f"Actual batch size (prompts): {batch_size}")
-            
-            # 報酬を (batch_size, num_generations) に整形
-            grouped_rewards = rewards.view(batch_size, self.num_generations)
-            print(f"Grouped rewards shape: {grouped_rewards.shape}")
-            
-            # フィルタリング条件
-            all_incorrect = (grouped_rewards == -1).all(dim=1)
-            all_correct = (grouped_rewards == 1).all(dim=1)
-            keep_mask = ~(all_incorrect | all_correct)
-            
-            print(f"Keep mask shape: {keep_mask.shape}")
-            print(f"Keeping {keep_mask.sum().item()}/{len(keep_mask)} prompts")
-            
-            # プロンプト単位でフィルタリング
-            keep_indices = keep_mask.nonzero().squeeze(-1)
-            print(f"Keep indices: {keep_indices}")
-            
-            # 各テンソルをフィルタリング
-            def filter_tensor(tensor, dim0_size):
-                if tensor.size(0) == dim0_size:  # プロンプト次元
-                    return tensor[keep_indices]
-                elif tensor.size(0) == dim0_size * self.num_generations:  # 生成次元
-                    return tensor[keep_indices.repeat_interleave(self.num_generations)]
-                return tensor
+            current_rank = getattr(self.accelerator, 'local_process_index', 0)
+            print(f"[Rank {current_rank}] Pre-filter rewards shape: {rewards.shape}, num_generations: {self.num_generations}")
+
+            # 実バッチサイズを動的に計算（rewardsの要素数から逆算）
+            real_batch_size = rewards.size(0) // self.num_generations
+            if rewards.size(0) % self.num_generations != 0:
+                print(f"[Rank {current_rank}] Invalid rewards shape: {rewards.shape} for num_generations={self.num_generations}")
+                return inputs
+
+            print(f"[Rank {current_rank}] Calculated real batch size: {real_batch_size}")
+
+
+
+            try:
+                # 報酬を (real_batch_size, num_generations) に整形
+                grouped_rewards = rewards.view(real_batch_size, self.num_generations)
+                print(f"[Rank {current_rank}] Grouped rewards shape: {grouped_rewards.shape}")
+
+                # フィルタリング条件
+                all_incorrect = (grouped_rewards == -1).all(dim=1)
+                all_correct = (grouped_rewards == 1).all(dim=1)
+                keep_mask = ~(all_incorrect | all_correct)
+
+                print(f"[Rank {current_rank}] Keeping {keep_mask.sum().item()}/{len(keep_mask)} prompts")
+
+                # プロンプト単位でフィルタリング適用
+                keep_indices = keep_mask.nonzero().squeeze(-1)
+                prompt_completion_ids = prompt_completion_ids[keep_indices]
+                prompt_ids = prompt_ids[keep_indices]
+                prompt_mask = prompt_mask[keep_indices]
                 
-            prompt_completion_ids = filter_tensor(prompt_completion_ids, batch_size)
-            prompt_ids = filter_tensor(prompt_ids, batch_size)
-            prompt_mask = filter_tensor(prompt_mask, batch_size)
-            completion_ids = filter_tensor(completion_ids, batch_size * self.num_generations)
-            completion_mask = filter_tensor(completion_mask, batch_size * self.num_generations)
-            rewards = filter_tensor(rewards, batch_size * self.num_generations)
-            
+                # 生成物は num_generations 倍の数があるため特別処理
+                completion_ids = completion_ids[keep_indices.repeat_interleave(self.num_generations)]
+                completion_mask = completion_mask[keep_indices.repeat_interleave(self.num_generations)]
+                rewards = rewards[keep_indices.repeat_interleave(self.num_generations)]
+
+            except RuntimeError as e:
+                print(f"[Rank {current_rank}] Filtering failed: {str(e)}")
+                print(f"[Rank {current_rank}] Fallback to original inputs")
+                return inputs  # フィルタリング失敗時は入力をそのまま返す
+
+
             # 空バッチチェック
             if len(prompt_completion_ids) == 0:
                 print("Warning: All samples filtered out, returning dummy data")
@@ -844,6 +848,8 @@ class GRPOTrainer(Trainer):
             # フィルタリング後の統計を記録
             self._metrics[mode]["filtered_all_incorrect"].append(all_incorrect.float().mean().item())
             self._metrics[mode]["filtered_all_correct"].append(all_correct.float().mean().item())
+
+
 
         # 通常の報酬計算処理 (GRPO/Reinforce共通)
         if self.args.allocation:
