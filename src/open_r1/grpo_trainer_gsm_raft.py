@@ -467,7 +467,6 @@ class GRPOTrainer(Trainer):
                 self.reward_funcs[i] = self.accelerator.prepare_model(reward_func, evaluation_mode=True)
 
 
-    
     def _init_raft_components(self):
         """RAFT用のコンポーネント初期化"""
         if self.config.policy_loss in ['vanilla', 'plusplus']:
@@ -483,25 +482,17 @@ class GRPOTrainer(Trainer):
 
     
     def _prepare_inputs(self, inputs):
-        """
-        分散トレーニング環境での入力テンソルの形状整合性を保証
-        """
-        # 親クラスの処理を最初に実行
         inputs = super()._prepare_inputs(inputs)
         
-        # アテンションマスクの形状チェックと修正
+        # 形状整合性チェック
+        batch_size = inputs["input_ids"].size(0)
         if "attention_mask" in inputs:
-            batch_size = inputs["input_ids"].size(0)
-            current_mask_size = inputs["attention_mask"].size(0)
-            
-            # 形状不一致の場合のみ処理
-            if current_mask_size != batch_size:
-                print(f"Adjusting attention_mask shape from {inputs['attention_mask'].shape} to match batch size {batch_size}")
-                inputs["attention_mask"] = inputs["attention_mask"][:batch_size]  # スライシングで調整
+            if inputs["attention_mask"].size(0) != batch_size:
+                inputs["attention_mask"] = inputs["attention_mask"][:batch_size]
         
-        # DeepSpeed/分散トレーニング用の追加処理
-        if self.is_deepspeed_enabled:
-            inputs = {k: v.to(self.accelerator.device) for k, v in inputs.items()}
+        # デバッグ用ログ
+        if torch.distributed.get_rank() == 0:
+            print(f"Shapes - input_ids: {inputs['input_ids'].shape}, attention_mask: {inputs['attention_mask'].shape}")
         
         return inputs
 
