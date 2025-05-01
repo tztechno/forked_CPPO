@@ -795,29 +795,52 @@ class GRPOTrainer(Trainer):
 
         # _generate_and_score_completions メソッド内
         if self.args.reinforce_variant == "rej":
-            # 元の報酬形状: [batch_size * num_generations]
-            batch_size = rewards.size(0) // self.num_generations
+
+            # デバッグ用：形状確認
+            print(f"Initial rewards shape: {rewards.shape}")
+            print(f"num_generations: {self.num_generations}")
+            
+            # 正しいバッチサイズ計算（プロンプト数）
+            batch_size = len(prompts)  # 元のプロンプト数
+            print(f"Actual batch size (prompts): {batch_size}")
+            
+            # 報酬を (batch_size, num_generations) に整形
             grouped_rewards = rewards.view(batch_size, self.num_generations)
+            print(f"Grouped rewards shape: {grouped_rewards.shape}")
             
             # フィルタリング条件
-            all_incorrect = (grouped_rewards == -1).all(dim=1)  # [batch_size]
-            all_correct = (grouped_rewards == 1).all(dim=1)     # [batch_size]
-            keep_mask = ~(all_incorrect | all_correct)          # [batch_size]
+            all_incorrect = (grouped_rewards == -1).all(dim=1)
+            all_correct = (grouped_rewards == 1).all(dim=1)
+            keep_mask = ~(all_incorrect | all_correct)
             
-            # デバッグ用ログ
-            print(f"Batch size: {batch_size}, Keep mask: {keep_mask.sum().item()}/{len(keep_mask)}")
+            print(f"Keep mask shape: {keep_mask.shape}")
+            print(f"Keeping {keep_mask.sum().item()}/{len(keep_mask)} prompts")
             
-            # プロンプトレベルでフィルタリング
-            prompt_completion_ids = prompt_completion_ids[keep_mask]
-            prompt_ids = prompt_ids[keep_mask]
-            prompt_mask = prompt_mask[keep_mask]
-            completion_ids = completion_ids[keep_mask]
-            completion_mask = completion_mask[keep_mask]
+            # プロンプト単位でフィルタリング
+            keep_indices = keep_mask.nonzero().squeeze(-1)
+            print(f"Keep indices: {keep_indices}")
             
-            # 報酬もフィルタリング
-            rewards = rewards[keep_mask.repeat_interleave(self.num_generations)]
+            # 各テンソルをフィルタリング
+            def filter_tensor(tensor, dim0_size):
+                if tensor.size(0) == dim0_size:  # プロンプト次元
+                    return tensor[keep_indices]
+                elif tensor.size(0) == dim0_size * self.num_generations:  # 生成次元
+                    return tensor[keep_indices.repeat_interleave(self.num_generations)]
+                return tensor
+                
+            prompt_completion_ids = filter_tensor(prompt_completion_ids, batch_size)
+            prompt_ids = filter_tensor(prompt_ids, batch_size)
+            prompt_mask = filter_tensor(prompt_mask, batch_size)
+            completion_ids = filter_tensor(completion_ids, batch_size * self.num_generations)
+            completion_mask = filter_tensor(completion_mask, batch_size * self.num_generations)
+            rewards = filter_tensor(rewards, batch_size * self.num_generations)
+            
+            # 空バッチチェック
+            if len(prompt_completion_ids) == 0:
+                print("Warning: All samples filtered out, returning dummy data")
+                return self._create_dummy_inputs(inputs)
 
-            
+
             # フィルタリング後の統計を記録
             self._metrics[mode]["filtered_all_incorrect"].append(all_incorrect.float().mean().item())
             self._metrics[mode]["filtered_all_correct"].append(all_correct.float().mean().item())
@@ -1012,6 +1035,23 @@ class GRPOTrainer(Trainer):
             "rewards": rewards if hasattr(self.args, 'reinforce_variant') else None,          
         }
 
+
+    def _create_dummy_inputs(self, original_inputs):
+        """フィルタリングですべてのサンプルが除去された場合のダミーデータ生成"""
+        dummy = {
+            "prompt_ids": torch.zeros(1, 8, dtype=torch.long, device=self.device),
+            "prompt_mask": torch.ones(1, 8, dtype=torch.long, device=self.device),
+            "completion_ids": torch.zeros(1, 16, dtype=torch.long, device=self.device),
+            "completion_mask": torch.ones(1, 16, dtype=torch.long, device=self.device),
+            "advantages": torch.zeros(1, device=self.device),
+            "rewards": torch.zeros(1, device=self.device)
+        }
+        if "old_per_token_logps" in original_inputs:
+            dummy["old_per_token_logps"] = torch.zeros(1, 16, device=self.device)
+        if "ref_per_token_logps" in original_inputs:
+            dummy["ref_per_token_logps"] = torch.zeros(1, 16, device=self.device)
+        return dummy
+    
 
     def compute_rewards(self, rewards_per_func, prompts):
         # デバイス移動
