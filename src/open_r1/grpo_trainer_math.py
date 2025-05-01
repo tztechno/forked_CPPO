@@ -5,16 +5,15 @@
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
-#
+# 
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#
-# scale_rewards setting added for drgrpo 2027-04-27
-# L.449, L.899-901 
+# RAFT L.186-188,L458-469,L.922-950 2025-04-26
+# REINFORCE L.176,197,824,961,1006,1048 2025-04-28
 
 import os
 import textwrap
@@ -112,52 +111,6 @@ RewardFunc = Union[str, PreTrainedModel, Callable[[list, list], list[float]]]
 
 
 class RepeatRandomSampler(Sampler):
-    """
-    Sampler that repeats the indices of a dataset in a structured manner.
-
-    Args:
-        data_source (`Sized`):
-            Dataset to sample from.
-        mini_repeat_count (`int`):
-            Number of times to repeat each index per batch.
-        batch_size (`int`, *optional*, defaults to `1`):
-            Number of unique indices per batch.
-        repeat_count (`int`, *optional*, defaults to `1`):
-            Number of times to repeat the full sampling process.
-        seed (`int` or `None`, *optional*, defaults to `None`):
-            Random seed for reproducibility (only affects this sampler).
-
-    Example:
-    ```python
-    >>> sampler = RepeatRandomSampler(["a", "b", "c", "d", "e", "f", "g"], mini_repeat_count=2, batch_size=3, repeat_count=4)
-    >>> list(sampler)
-    [4, 4, 3, 3, 0, 0,
-     4, 4, 3, 3, 0, 0,
-     4, 4, 3, 3, 0, 0,
-     4, 4, 3, 3, 0, 0,
-
-     1, 1, 2, 2, 6, 6,
-     1, 1, 2, 2, 6, 6,
-     1, 1, 2, 2, 6, 6,
-     1, 1, 2, 2, 6, 6]
-    ```
-
-    ```txt
-    mini_repeat_count = 3
-          -   -   -
-         [0,  0,  0,  1,  1,  1,  2,  2,  2,  3,  3,  3,      |
-          4,  4,  4,  5,  5,  5,  6,  6,  6,  7,  7,  7,      |
-          8,  8,  8,  9,  9,  9, 10, 10, 10, 11, 11, 11,      |
-                                                                repeat_count = 2
-          0,  0,  0,  1,  1,  1,  2,  2,  2,  3,  3,  3,      |
-          4,  4,  4,  5,  5,  5,  6,  6,  6,  7,  7,  7,      |
-          8,  8,  8,  9,  9,  9, 10, 10, 10, 11, 11, 11, ...] |
-          ---------   ---------   ---------   ---------
-           ---------   ---------   ---------   ---------
-            ---------   ---------   ---------   ---------
-                         batch_size = 12
-    ```
-    """
 
     def __init__(
         self,
@@ -199,96 +152,14 @@ class RepeatRandomSampler(Sampler):
         return self.num_samples * self.mini_repeat_count * self.repeat_count
 
 
+
+
+
 class GRPOTrainer(Trainer):
-    """
-    Trainer for the Group Relative Policy Optimization (GRPO) method. This algorithm was initially proposed in the
-    paper [DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models](https://huggingface.co/papers/2402.03300).
-
-    Example:
-
-    ```python
-    from datasets import load_dataset
-    from trl import GRPOTrainer
-
-    dataset = load_dataset("trl-lib/tldr", split="train")
-
-    def reward_func(completions, **kwargs):
-        # Dummy reward function that rewards completions with more unique letters.
-        return [float(len(set(completion))) for completion in completions]
-
-    trainer = GRPOTrainer(
-        model="Qwen/Qwen2-0.5B-Instruct",
-        reward_funcs=reward_func,
-        train_dataset=dataset,
-    )
-
-    trainer.train()
-    ```
-
-    Args:
-        model (`Union[str, PreTrainedModel]`):
-            Model to be trained. Can be either:
-
-            - A string, being the *model id* of a pretrained model hosted inside a model repo on huggingface.co, or
-              a path to a *directory* containing model weights saved using
-              [`~transformers.PreTrainedModel.save_pretrained`], e.g., `'./my_model_directory/'`. The model is
-              loaded using [`~transformers.AutoModelForCausalLM.from_pretrained`] with the keywork arguments
-              in `args.model_init_kwargs`.
-            - A [`~transformers.PreTrainedModel`] object. Only causal language models are supported.
-        reward_funcs (`Union[RewardFunc, list[RewardFunc]]`):
-            Reward functions to be used for computing the rewards. To compute the rewards, we call all the reward
-            functions with the prompts and completions and sum the rewards. Can be either:
-
-            - A single reward function, such as:
-                - A string: The *model ID* of a pretrained model hosted inside a model repo on huggingface.co, or a
-                path to a *directory* containing model weights saved using
-                [`~transformers.PreTrainedModel.save_pretrained`], e.g., `'./my_model_directory/'`. The model is loaded
-                using [`~transformers.AutoModelForSequenceClassification.from_pretrained`] with `num_labels=1` and the
-                keyword arguments in `args.model_init_kwargs`.
-                - A [`~transformers.PreTrainedModel`] object: Only sequence classification models are supported.
-                - A custom reward function: The function is provided with the prompts and the generated completions,
-                  plus any additional columns in the dataset. It should return a list of rewards. For more details, see
-                  [Using a custom reward function](#using-a-custom-reward-function).
-            - A list of reward functions, where each item can independently be any of the above types. Mixing different
-            types within the list (e.g., a string model ID and a custom reward function) is allowed.
-        args ([`GRPOConfig`], *optional*, defaults to `None`):
-            Configuration for this trainer. If `None`, a default configuration is used.
-        train_dataset ([`~datasets.Dataset`] or [`~datasets.IterableDataset`]):
-            Dataset to use for training. It must include a column `"prompt"`. Any additional columns in the dataset is
-            ignored. The format of the samples can be either:
-
-            - [Standard](dataset_formats#standard): Each sample contains plain text.
-            - [Conversational](dataset_formats#conversational): Each sample contains structured messages (e.g., role
-              and content).
-        eval_dataset ([`~datasets.Dataset`], [`~datasets.IterableDataset`] or `dict[str, Union[Dataset, IterableDataset]]`):
-            Dataset to use for evaluation. It must meet the same requirements as `train_dataset`.
-        processing_class ([`~transformers.PreTrainedTokenizerBase`], *optional*, defaults to `None`):
-            Processing class used to process the data. The padding side must be set to "left". If `None`, the
-            processing class is loaded from the model's name with [`~transformers.AutoTokenizer.from_pretrained`].
-        reward_processing_classes (`Union[PreTrainedTokenizerBase, list[PreTrainedTokenizerBase]]`, *optional*, defaults to `None`):
-            Processing classes corresponding to the reward functions specified in `reward_funcs`. Can be either:
-
-            - A single processing class: Used when `reward_funcs` contains only one reward function.
-            - A list of processing classes: Must match the order and length of the reward functions in `reward_funcs`.
-            If set to `None`, or if an element of the list corresponding to a [`~transformers.PreTrainedModel`] is
-            `None`, the tokenizer for the model is automatically loaded using [`~transformers.AutoTokenizer.from_pretrained`].
-            For elements in `reward_funcs` that are custom reward functions (not [`~transformers.PreTrainedModel`]),
-            the corresponding entries in `reward_processing_classes` are ignored.
-        callbacks (list of [`~transformers.TrainerCallback`], *optional*, defaults to `None`):
-            List of callbacks to customize the training loop. Will add those to the list of default callbacks
-            detailed in [here](https://huggingface.co/docs/transformers/main_classes/callback).
-
-            If you want to remove one of the default callbacks used, use the [`~transformers.Trainer.remove_callback`]
-            method.
-        optimizers (`tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR]`, *optional*, defaults to `(None, None)`):
-            A tuple containing the optimizer and the scheduler to use. Will default to an instance of [`AdamW`] on your
-            model and a scheduler given by [`get_linear_schedule_with_warmup`] controlled by `args`.
-        peft_config ([`~peft.PeftConfig`], *optional*, defaults to `None`):
-            PEFT configuration used to wrap the model. If `None`, the model is not wrapped.
-    """
 
     _tag_names = ["trl", "grpo"]
 
+    
     def __init__(
         self,
         model: Union[str, PreTrainedModel],
@@ -301,13 +172,35 @@ class GRPOTrainer(Trainer):
         callbacks: Optional[list[TrainerCallback]] = None,
         optimizers: tuple[Optional[torch.optim.Optimizer], Optional[torch.optim.lr_scheduler.LambdaLR]] = (None, None),
         peft_config: Optional["PeftConfig"] = None,
+
+        # REINFORCE関連の追加設定
+        reinforce_variant: str = "grpo",  # "vanilla", "plusplus", "grpo"のいずれか
+        reinforce_pp_beta: float = 0.1,  # REINFORCE++のβ値（重みづけパラメータ）
+        use_reward_scaling: bool = True,  # 報酬スケーリングを使用するか
+        reward_scaling_factor: float = 1.0,  # 報酬スケーリング係数    
     ):
+        
         # Args
+        # Args initialization first
         if args is None:
             model_name = model if isinstance(model, str) else model.config._name_or_path
             model_name = model_name.split("/")[-1]
             args = GRPOConfig(f"{model_name}-GRPO")
+        
+        # Now that args is initialized, we can check policy_loss
+        self.config = args  # Make config accessible as self.config
+        
+        # RAFT-specific initialization
+        if hasattr(self.config, 'policy_loss') and self.config.policy_loss in ['vanilla', 'plusplus']:
+            self._init_raft_components()
 
+        # REINFORCE関連の追加設定    
+        self.reinforce_variant = reinforce_variant
+        self.reinforce_pp_beta = reinforce_pp_beta
+        self.use_reward_scaling = use_reward_scaling
+        self.reward_scaling_factor = reward_scaling_factor
+
+        
         # Models
         # Trained model
         model_init_kwargs = args.model_init_kwargs or {}
@@ -445,10 +338,6 @@ class GRPOTrainer(Trainer):
         self._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
         self.log_completions = args.log_completions
 
-        #### for drgrpo 2025-04-27
-        self.scale_rewards = args.scale_rewards
-
-        
         super().__init__(
             model=model,
             args=args,
@@ -554,6 +443,8 @@ class GRPOTrainer(Trainer):
                 pad_token_id=processing_class.pad_token_id,
             )
 
+
+        
         # Gradient accumulation requires scaled loss. Normally, loss scaling in the parent class depends on whether the
         # model accepts loss-related kwargs. Since we compute our own loss, this check is irrelevant. We set
         # self.model_accepts_loss_kwargs to False to enable scaling.
@@ -574,7 +465,36 @@ class GRPOTrainer(Trainer):
         for i, reward_func in enumerate(self.reward_funcs):
             if isinstance(reward_func, PreTrainedModel):
                 self.reward_funcs[i] = self.accelerator.prepare_model(reward_func, evaluation_mode=True)
-                
+
+
+    def _init_raft_components(self):
+        """RAFT用のコンポーネント初期化"""
+        if self.config.policy_loss in ['vanilla', 'plusplus']:
+            # 報酬正規化用バッファ
+            self.reward_buffer = {
+                'min': torch.tensor(float('inf')),
+                'max': torch.tensor(float('-inf'))
+            }
+            
+            # クリッピング範囲のデフォルト値設定
+            if not hasattr(self.config, 'clip_epsilon'):
+                self.config.clip_epsilon = 0.2  # デフォルト値
+
+    
+    def _prepare_inputs(self, inputs):
+        inputs = super()._prepare_inputs(inputs)
+        
+        # 形状整合性チェック
+        batch_size = inputs["input_ids"].size(0)
+        if "attention_mask" in inputs:
+            if inputs["attention_mask"].size(0) != batch_size:
+                inputs["attention_mask"] = inputs["attention_mask"][:batch_size]
+        
+        # デバッグ用ログ
+        if torch.distributed.get_rank() == 0:
+            print(f"Shapes - input_ids: {inputs['input_ids'].shape}, attention_mask: {inputs['attention_mask'].shape}")
+        
+        return inputs
 
 
     def _set_signature_columns_if_needed(self):
@@ -720,6 +640,9 @@ class GRPOTrainer(Trainer):
             inputs = self._generate_and_score_completions(inputs)
         return inputs
 
+
+
+    
     def _generate_and_score_completions(
         self, inputs: dict[str, Union[torch.Tensor, Any]]
     ) -> dict[str, Union[torch.Tensor, Any]]:
@@ -733,6 +656,11 @@ class GRPOTrainer(Trainer):
         )
         prompt_inputs = super()._prepare_inputs(prompt_inputs)
         prompt_ids, prompt_mask = prompt_inputs["input_ids"], prompt_inputs["attention_mask"]
+
+
+
+
+
 
         if self.max_prompt_length is not None:
             prompt_ids = prompt_ids[:, -self.max_prompt_length :]
@@ -754,7 +682,7 @@ class GRPOTrainer(Trainer):
                 
                 # edit
                 if self.args.allocation:
-                    self.repeat = int(1 / (1-self.args.pruning))
+                    self.repeat = math.ceil(1 / (1 - self.args.pruning))
                     if self.args.vllm_guided_decoding_regex is not None:
                         guided_decoding = GuidedDecodingParams(backend="outlines", regex=self.args.vllm_guided_decoding_regex)
                     else:
@@ -878,37 +806,138 @@ class GRPOTrainer(Trainer):
         # Apply weights to each reward function's output and sum
         rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).sum(dim=1)
 
-        # Compute grouped-wise rewards
-        # edit
+        # ======================================================
+        # Reinforce-Rej フィルタリング処理開始
+        # ======================================================
+        if self.args.reinforce_variant == "rej":
+
+            mode = "train" if self.model.training else "eval"  # 追加   
+            current_rank = getattr(self.accelerator, 'local_process_index', 0)
+            print(f"[Rank {current_rank}] Pre-filter rewards shape: {rewards.shape}, num_generations: {self.num_generations}")
+
+            # 実バッチサイズを動的に計算（rewardsの要素数から逆算）
+            real_batch_size = rewards.size(0) // self.num_generations
+            if rewards.size(0) % self.num_generations != 0:
+                print(f"[Rank {current_rank}] Invalid rewards shape: {rewards.shape} for num_generations={self.num_generations}")
+                return inputs
+
+            print(f"[Rank {current_rank}] Calculated real batch size: {real_batch_size}")
+
+
+
+            try:
+                # 報酬を (real_batch_size, num_generations) に整形
+                grouped_rewards = rewards.view(real_batch_size, self.num_generations)
+                print(f"[Rank {current_rank}] Grouped rewards shape: {grouped_rewards.shape}")
+
+                # フィルタリング条件
+                all_incorrect = (grouped_rewards == -1).all(dim=1)
+                all_correct = (grouped_rewards == 1).all(dim=1)
+                keep_mask = ~(all_incorrect | all_correct)
+
+                print(f"[Rank {current_rank}] Keeping {keep_mask.sum().item()}/{len(keep_mask)} prompts")
+
+                # プロンプト単位でフィルタリング適用
+                keep_indices = keep_mask.nonzero().squeeze(-1)
+                prompt_completion_ids = prompt_completion_ids[keep_indices]
+                prompt_ids = prompt_ids[keep_indices]
+                prompt_mask = prompt_mask[keep_indices]
+                
+                # 生成物は num_generations 倍の数があるため特別処理
+                completion_ids = completion_ids[keep_indices.repeat_interleave(self.num_generations)]
+                completion_mask = completion_mask[keep_indices.repeat_interleave(self.num_generations)]
+                rewards = rewards[keep_indices.repeat_interleave(self.num_generations)]
+
+            except RuntimeError as e:
+                print(f"[Rank {current_rank}] Filtering failed: {str(e)}")
+                print(f"[Rank {current_rank}] Fallback to original inputs")
+                return inputs  # フィルタリング失敗時は入力をそのまま返す
+
+
+            # 空バッチチェック
+            if len(prompt_completion_ids) == 0:
+                print("Warning: All samples filtered out, returning dummy data")
+                return self._create_dummy_inputs(inputs)
+
+
+            # フィルタリング後の統計を記録
+            self._metrics[mode]["filtered_all_incorrect"].append(all_incorrect.float().mean().item())
+            self._metrics[mode]["filtered_all_correct"].append(all_correct.float().mean().item())
+
+
+
+        # 通常の報酬計算処理 (GRPO/Reinforce共通)
         if self.args.allocation:
-            mean_grouped_rewards = rewards.view(-1, self.num_generations * self.repeat ).mean(dim=1)
-            std_grouped_rewards = rewards.view(-1, self.num_generations * self.repeat ).std(dim=1)
+            mean_grouped_rewards = rewards.view(-1, self.num_generations * self.repeat).mean(dim=1)
+            std_grouped_rewards = rewards.view(-1, self.num_generations * self.repeat).std(dim=1)
             mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(self.num_generations * self.repeat, dim=0)
             std_grouped_rewards = std_grouped_rewards.repeat_interleave(self.num_generations * self.repeat, dim=0)
         else:
-            mean_grouped_rewards = rewards.view(-1, self.num_generations ).mean(dim=1)
-            std_grouped_rewards = rewards.view(-1, self.num_generations ).std(dim=1)
-
-            # Normalize the rewards to compute the advantages
+            mean_grouped_rewards = rewards.view(-1, self.num_generations).mean(dim=1)
+            std_grouped_rewards = rewards.view(-1, self.num_generations).std(dim=1)
             mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(self.num_generations, dim=0)
             std_grouped_rewards = std_grouped_rewards.repeat_interleave(self.num_generations, dim=0)
 
-        # advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
 
-        #### for drgrpo 2025-04-27
-        advantages = rewards - mean_grouped_rewards
-        if self.scale_rewards:
-            advantages = advantages / (std_grouped_rewards + 1e-4)
+        advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
 
-        
         # Slice to keep only the local part of the data
         process_slice = slice(
             self.accelerator.process_index * len(prompts),
             (self.accelerator.process_index + 1) * len(prompts),
         )
         advantages = advantages[process_slice]
+
+
+        # REINFORCEメトリクス記録
+        mode = "eval" if self.control.should_evaluate else "train"
+        # L.830付近のREINFORCE処理部を以下のように修正
+        if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
+            ### fix 2025-05-01
+            if isinstance(inputs, list):
+                inputs_dict = {"inputs": inputs}
+                rewards = inputs_dict.get("rewards", advantages)
+            else:
+                rewards = inputs.get("rewards", advantages)
+            
+            if rewards.dim() == 1:
+                # 代替手段1: 事前計算されたlog_probsを使用
+                if "log_probs" in inputs:
+                    rewards = rewards.unsqueeze(-1).expand(-1, inputs["log_probs"].size(1))
+                # 代替手段2: 生成結果の長さを使用
+                else:
+                    seq_len = completion_ids.size(1)
+                    rewards = rewards.unsqueeze(-1).expand(-1, seq_len)
+                    self._metrics[mode]["warning"].append("used_completion_length_for_expansion")
+            
+            # メトリクス記録（元の報酬値で計算）
+            flat_rewards = rewards.flatten()  # メトリクス計算用に平坦化
+            self._metrics[mode]["reward_mean"].append(flat_rewards.mean().item())
+            self._metrics[mode]["reward_std"].append(flat_rewards.std().item())
+            self._metrics[mode]["reward_min"].append(flat_rewards.min().item())
+            self._metrics[mode]["reward_max"].append(flat_rewards.max().item())
         
+            # REINFORCE/REINFORCE++の処理
+            if self.args.reinforce_variant == "plusplus":
+                # バッチ内で正規化（形状を維持）
+                normalized_rewards = self._normalize_rewards(rewards)
+                beta = self.args.reinforce_pp_beta
+                combined_rewards = (1 - beta) * rewards + beta * normalized_rewards
+            else:  # vanilla REINFORCE
+                combined_rewards = rewards.clone()
+            
+            # スケーリング適用
+            if self.args.use_reward_scaling:
+                combined_rewards = combined_rewards * self.args.reward_scaling_factor
+                
+            # プロセススライス適用
+            combined_rewards = combined_rewards[process_slice]
+        else:
+            # GRPOの場合は従来通りadvantagesを使用
+            combined_rewards = None
+
         
+
         mode = "eval" if self.control.should_evaluate else "train"
         # edit
         if self.args.pruning != 0 and mode == 'train':
@@ -984,6 +1013,12 @@ class GRPOTrainer(Trainer):
             self._metrics[mode][f"rewards/{reward_func_name}"].append(reward_per_func[i].item())
 
         self._metrics[mode]["reward"].append(rewards.mean().item())
+        #### fix for reinforce_rej
+        if self.args.reinforce_variant == "rej":
+            self._metrics[mode]["filter_rate"].append(
+                (all_incorrect.float().mean().item() + all_correct.float().mean().item())
+            )
+
         self._metrics[mode]["reward_std"].append(std_grouped_rewards.mean().item())
 
         if (
@@ -1000,6 +1035,11 @@ class GRPOTrainer(Trainer):
                 "completion": gather_object(completions_text),
                 "reward": rewards.tolist(),
             }
+            
+            #### 追加 2025-05-01
+            ### print({k: len(v) for k, v in table.items()})
+            max_len = max(len(v) for v in table.values())
+            table = {k: v if len(v) == max_len else v + [None]*(max_len-len(v)) for k, v in table.items()}
             df = pd.DataFrame(table)
 
             if wandb.run is not None and self.accelerator.is_main_process:
@@ -1013,64 +1053,173 @@ class GRPOTrainer(Trainer):
             "old_per_token_logps": old_per_token_logps,
             "ref_per_token_logps": ref_per_token_logps,
             "advantages": advantages,
+            "rewards": rewards if hasattr(self.args, 'reinforce_variant') else None,          
         }
+
+
+    def _create_dummy_inputs(self, original_inputs):
+        """フィルタリングですべてのサンプルが除去された場合のダミーデータ生成"""
+        dummy = {
+            "prompt_ids": torch.zeros(1, 8, dtype=torch.long, device=self.device),
+            "prompt_mask": torch.ones(1, 8, dtype=torch.long, device=self.device),
+            "completion_ids": torch.zeros(1, 16, dtype=torch.long, device=self.device),
+            "completion_mask": torch.ones(1, 16, dtype=torch.long, device=self.device),
+            "advantages": torch.zeros(1, device=self.device),
+            "rewards": torch.zeros(1, device=self.device)
+        }
+        if "old_per_token_logps" in original_inputs:
+            dummy["old_per_token_logps"] = torch.zeros(1, 16, device=self.device)
+        if "ref_per_token_logps" in original_inputs:
+            dummy["ref_per_token_logps"] = torch.zeros(1, 16, device=self.device)
+        return dummy
+    
+
+    def compute_rewards(self, rewards_per_func, prompts):
+        # デバイス移動
+        device = rewards_per_func.device
+        
+        # 1. 形状チェック
+        if rewards_per_func.dim() != 2:
+            raise ValueError(f"rewards_per_func must be 2D tensor, got {rewards_per_func.shape}")
+        
+        # 2. 重み付け統合
+        weights = self.reward_weights.to(device).unsqueeze(0)  # [1, num_funcs]
+        rewards = (rewards_per_func * weights).sum(dim=1)  # [total_batch]
+        
+        # 3. グループ化処理
+        if self.args.allocation:
+            group_size = self.num_generations * self.repeat
+        else:
+            group_size = self.num_generations
+            
+        if rewards.size(0) % group_size != 0:
+            raise ValueError(
+                f"Batch size {rewards.size(0)} not divisible by group size {group_size}"
+            )
+        
+        # 4. 正規化
+        grouped_rewards = rewards.view(-1, group_size)
+        advantages = (grouped_rewards - grouped_rewards.mean(dim=1, keepdim=True)) \
+                    / (grouped_rewards.std(dim=1, keepdim=True) + 1e-4)
+        
+        # 5. プロセス分割
+        local_advantages = advantages.flatten()[self._get_process_slice(prompts)]
+        
+        return local_advantages
+
+    def _get_process_slice(self, prompts):
+        return slice(
+            self.accelerator.process_index * len(prompts),
+            (self.accelerator.process_index + 1) * len(prompts)
+        )
+
+
 
     @profiling_decorator
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-            
         if return_outputs:
             raise ValueError("The GRPOTrainer does not support returning outputs")
+        
         mode = "eval" if self.control.should_evaluate else "train"
-        # Compute the per-token log probabilities for the model
-        advantages = inputs["advantages"]
+        #advantages = inputs["advantages"]
         prompt_ids, prompt_mask = inputs["prompt_ids"], inputs["prompt_mask"]
         completion_ids, completion_mask = inputs["completion_ids"], inputs["completion_mask"]
         input_ids = torch.cat([prompt_ids, completion_ids], dim=1)
         attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)
-        logits_to_keep = completion_ids.size(1)  # we only need to compute the logits for the completion tokens
+        logits_to_keep = completion_ids.size(1)
+    
+        #rewards = inputs.get("rewards", None)
+        advantages = inputs.get("advantages", None)
 
+        # 1. トークンごとの対数確率を計算
         per_token_logps = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
+        per_token_loss=0
         
-        # Compute the KL divergence between the model and the reference model
+        # 2. RAFT用の損失計算
+        if self.config.policy_loss in ['vanilla', 'plusplus']:
+            rewards = inputs.get('raw_rewards', advantages)  # 生の報酬値を取得
+            weights = self._normalize_rewards(rewards).unsqueeze(1)  # 報酬を[0,1]範囲に正規化
+            
+            if self.config.policy_loss == 'plusplus':
+                # クリッピングを適用 (1-ε, 1+εの範囲に制限)
+                weights = torch.clamp(weights, 
+                                   1-self.config.clip_epsilon, 
+                                   1+self.config.clip_epsilon)
+            
+            # 報酬重み付けされた損失
+            per_token_loss = -per_token_logps * weights
+            
+            # メトリクス記録
+            self._metrics[mode]["reward_weight_mean"].append(weights.mean().item())
+            self._metrics[mode]["reward_weight_std"].append(weights.std().item())
+
+
+        #### for reinforce
+        elif hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus", "rej"]:
+            rewards = inputs.get("rewards")
+            if rewards is None:
+                raise ValueError("REINFORCE training requires rewards in inputs")
+            
+            log_probs = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
+            inputs["log_probs"] = log_probs
+            
+            # Reinforce-Rejではフィルタリング済みなのでvanillaと同じ処理
+            loss = -(log_probs * rewards).mean()
+            
+            # メトリクス記録
+            self._metrics[mode]["reinforce_loss"].append(loss.item())
+            if self.args.reinforce_variant == "plusplus":
+                self._metrics[mode]["reward_beta"].append(self.args.reinforce_pp_beta)
+
+
+        else:
+            # 3. 従来のGRPO損失計算
+            old_per_token_logps = (inputs["old_per_token_logps"] 
+                                 if self.num_iterations > 1 
+                                 else per_token_logps.detach())
+            ratio = torch.exp(per_token_logps - old_per_token_logps)
+            clipped_ratio = torch.clamp(ratio, 1-self.epsilon, 1+self.epsilon)
+            
+            per_token_loss1 = ratio * advantages.unsqueeze(1)
+            per_token_loss2 = clipped_ratio * advantages.unsqueeze(1)
+            per_token_loss = -torch.min(per_token_loss1, per_token_loss2)
+    
+        # 4. KLダイバージェンス項の追加 (両アルゴリズム共通)
         if self.beta != 0.0:
             ref_per_token_logps = inputs["ref_per_token_logps"]
-            per_token_kl = (
-                torch.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1
-            )
-            second_item = self.beta * (torch.exp(per_token_logps.detach() - ref_per_token_logps.detach())-1)
-            self._metrics[mode]["second_item"].append(second_item.mean().item())
-        else:
-            second_item = torch.zeros_like(per_token_logps)
-
-        # Compute the loss
-
-        # When using num_iterations == 1, old_per_token_logps == per_token_logps, so we can skip it's computation (see
-        # _generate_and_score_completions) and use per_token_logps.detach() instead.
-        old_per_token_logps = inputs["old_per_token_logps"] if self.num_iterations > 1 else per_token_logps.detach()
-        coef_1 = torch.exp(per_token_logps - old_per_token_logps)
-        coef_2 = torch.clamp(coef_1, 1 - self.epsilon, 1 + self.epsilon)
-        per_token_loss1 = coef_1 * advantages.unsqueeze(1)
-        self._metrics[mode]["first_item"].append(per_token_loss1.detach().mean().item())
-        self._metrics[mode]["first_item_div_second_item"].append((per_token_loss1.detach()).mean().item()/(second_item.mean().item()+ 1e-6))
-        self._metrics[mode]["total_sum"].append((per_token_loss1.detach() + second_item).mean().item())
-        per_token_loss2 = coef_2 * advantages.unsqueeze(1)
-        per_token_loss = -torch.min(per_token_loss1, per_token_loss2)
-        if self.beta != 0.0:
-            per_token_loss = per_token_loss + self.beta * per_token_kl
-        loss = (per_token_loss * completion_mask).sum() / completion_mask.sum()
-
-        # Log the metrics
-        mode = "eval" if self.control.should_evaluate else "train"
-
-        if self.beta != 0.0:
-            mean_kl = ((per_token_kl * completion_mask).sum(dim=1) / completion_mask.sum(dim=1)).mean()
-            self._metrics[mode]["kl"].append(self.accelerator.gather_for_metrics(mean_kl).mean().item())
-
-        is_clipped = (per_token_loss1 < per_token_loss2).float()
-        clip_ratio = (is_clipped * completion_mask).sum() / completion_mask.sum()
-        self._metrics[mode]["clip_ratio"].append(self.accelerator.gather_for_metrics(clip_ratio).mean().item())
+            kl_div = (torch.exp(ref_per_token_logps - per_token_logps) - 
+                    (ref_per_token_logps - per_token_logps) - 1)
+            per_token_loss += self.beta * kl_div
+            self._metrics[mode]["kl_div"].append(kl_div.mean().item())
+    
+        # 5. マスクを適用して最終的な損失を計算
+        loss = (per_token_loss * completion_mask).sum() / (completion_mask.sum() + 1e-8)
+        
+        # メトリクス記録
+        self._metrics[mode]["loss"].append(loss.item())
         return loss
     
+
+
+    ### REINFORCE++
+    def _normalize_rewards(self, rewards):
+        """
+        REINFORCE++のための報酬正規化
+        論文に従い、各バッチ内の報酬を[0,1]範囲に正規化
+        """
+        if rewards.numel() == 1:  # 単一要素の場合
+            return torch.zeros_like(rewards)
+            
+        min_r = rewards.min()
+        max_r = rewards.max()
+        
+        # max_rとmin_rが同じ場合（全ての報酬が同一の場合）、ゼロを返す
+        if max_r == min_r:
+            return torch.zeros_like(rewards)
+            
+        return (rewards - min_r) / (max_r - min_r + 1e-8)
+    
+
     def evaluate(self, eval_dataset: Optional[Union[Dataset, Dict[str, Dataset]]] = None, ignore_keys: Optional[List[str]] = None, metric_key_prefix: str = "eval") -> Dict[str, float]:
         metric = {}
         metric['eval_accuracy'] = 0
@@ -1080,6 +1229,7 @@ class GRPOTrainer(Trainer):
         correct = 0
         device = self.accelerator.device
         accuracy = torch.tensor(0, device=device)
+
         for inputs in pbar:
             solution = [x['solution'] for x in inputs]
             solution = [extract_answer_from_dataset(a) for a in solution]
@@ -1191,11 +1341,46 @@ class GRPOTrainer(Trainer):
             mode = "eval" if self.control.should_evaluate else "train"
             self._metrics[mode][f"accuracy"].append(accuracy.item())
         
+
+        # REINFORCE評価用の追加メトリクス
+        if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
+            metric['eval_reward_mean'] = 0
+            metric['eval_reward_std'] = 0
+            metric['eval_reward_min'] = 0
+            metric['eval_reward_max'] = 0
+        
+        # 評価ループ内でREINFORCEメトリクスを計算
+        for inputs in eval_dataloader:
+            # 既存の評価処理
+            
+            # REINFORCE評価の場合
+            if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
+                with torch.no_grad():
+                    outputs = self._generate_and_score_completions(inputs)
+                    rewards = outputs['rewards']
+                    
+                    # メトリクス更新
+                    metric['eval_reward_mean'] += rewards.mean().item()
+                    metric['eval_reward_std'] += rewards.std().item()
+                    metric['eval_reward_min'] += rewards.min().item()
+                    metric['eval_reward_max'] += rewards.max().item()
+        
+        # メトリクス平均化
+        num_batches = len(eval_dataloader)
+        if num_batches > 0:
+            if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
+                metric['eval_reward_mean'] /= num_batches
+                metric['eval_reward_std'] /= num_batches
+                metric['eval_reward_min'] /= num_batches
+                metric['eval_reward_max'] /= num_batches
+
+
         accuracy = broadcast(accuracy)
         metric['eval_accuracy'] += accuracy.item()
         
         return metric
     
+
     def training_step(
         self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]], num_items_in_batch=None
     ) -> torch.Tensor:
@@ -1282,8 +1467,25 @@ class GRPOTrainer(Trainer):
 
     def log(self, logs: dict[str, float], start_time: Optional[float] = None) -> None:
         mode = "eval" if self.control.should_evaluate else "train"
-        metrics = {key: sum(val) / len(val) for key, val in self._metrics[mode].items()}  # average the metrics
+        ### metrics = {key: sum(val) / len(val) for key, val in self._metrics[mode].items()}  # average the metrics
+        
+        ### fix 2025-05-01
+        metrics = {}
+        for key, val in self._metrics[mode].items():
+            try:
+                # 数値のみをフィルタリング
+                numeric_vals = [x for x in val if isinstance(x, (int, float))]
+                if numeric_vals:
+                    metrics[key] = sum(numeric_vals) / len(numeric_vals)
+                else:
+                    metrics[key] = 0  # デフォルト値
+                    print(f"Warning: No numeric values for metric {key}")
+            except Exception as e:
+                print(f"Error calculating metric {key}: {e}")
+                metrics[key] = 0  # デフォルト値
 
+
+        
         # This method can be called both in training and evaluation. When called in evaluation, the keys in `logs`
         # start with "eval_". We need to add the prefix "eval_" to the keys in `metrics` to match the format.
         if mode == "eval":
