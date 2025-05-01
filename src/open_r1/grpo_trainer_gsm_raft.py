@@ -793,21 +793,30 @@ class GRPOTrainer(Trainer):
         rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).sum(dim=1)
 
 
-        # Compute grouped-wise rewards
+        # _generate_and_score_completions メソッド内
         if self.args.reinforce_variant == "rej":
-            # Reinforce-Rej: Filter out all-correct and all-incorrect prompts
-            grouped_rewards = rewards.view(-1, self.num_generations)
-            all_incorrect = (grouped_rewards == -1).all(dim=1)  # 全回答が不正解
-            all_correct = (grouped_rewards == 1).all(dim=1)     # 全回答が正解
-            keep_mask = ~(all_incorrect | all_correct)          # 保持するサンプル
+            # 元の報酬形状: [batch_size * num_generations]
+            batch_size = rewards.size(0) // self.num_generations
+            grouped_rewards = rewards.view(batch_size, self.num_generations)
             
-            # フィルタリングを適用
+            # フィルタリング条件
+            all_incorrect = (grouped_rewards == -1).all(dim=1)  # [batch_size]
+            all_correct = (grouped_rewards == 1).all(dim=1)     # [batch_size]
+            keep_mask = ~(all_incorrect | all_correct)          # [batch_size]
+            
+            # デバッグ用ログ
+            print(f"Batch size: {batch_size}, Keep mask: {keep_mask.sum().item()}/{len(keep_mask)}")
+            
+            # プロンプトレベルでフィルタリング
+            prompt_completion_ids = prompt_completion_ids[keep_mask]
+            prompt_ids = prompt_ids[keep_mask]
+            prompt_mask = prompt_mask[keep_mask]
+            completion_ids = completion_ids[keep_mask]
+            completion_mask = completion_mask[keep_mask]
+            
+            # 報酬もフィルタリング
             rewards = rewards[keep_mask.repeat_interleave(self.num_generations)]
-            prompt_completion_ids = prompt_completion_ids[keep_mask.repeat_interleave(self.num_generations)]
-            prompt_ids = prompt_ids[keep_mask.repeat_interleave(self.num_generations)]
-            prompt_mask = prompt_mask[keep_mask.repeat_interleave(self.num_generations)]
-            completion_ids = completion_ids[keep_mask.repeat_interleave(self.num_generations)]
-            completion_mask = completion_mask[keep_mask.repeat_interleave(self.num_generations)]
+
             
             # フィルタリング後の統計を記録
             self._metrics[mode]["filtered_all_incorrect"].append(all_incorrect.float().mean().item())
