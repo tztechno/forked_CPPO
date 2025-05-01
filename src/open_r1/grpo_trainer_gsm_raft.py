@@ -823,7 +823,12 @@ class GRPOTrainer(Trainer):
         mode = "eval" if self.control.should_evaluate else "train"
         # L.830付近のREINFORCE処理部を以下のように修正
         if hasattr(self.args, 'reinforce_variant') and self.args.reinforce_variant in ["vanilla", "plusplus"]:
-            rewards = inputs.get("rewards", advantages)
+            ### fix 2025-05-01
+            if isinstance(inputs, list):
+                inputs_dict = {"inputs": inputs}
+                rewards = inputs_dict.get("rewards", advantages)
+            else:
+                rewards = inputs.get("rewards", advantages)
             
             if rewards.dim() == 1:
                 # 代替手段1: 事前計算されたlog_probsを使用
