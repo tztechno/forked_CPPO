@@ -1035,6 +1035,7 @@ class GRPOTrainer(Trainer):
 
         # 1. トークンごとの対数確率を計算
         per_token_logps = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
+        per_token_loss=0
         
         # 2. RAFT用の損失計算
         if self.config.policy_loss in ['vanilla', 'plusplus']:
