@@ -482,6 +482,29 @@ class GRPOTrainer(Trainer):
                 self.config.clip_epsilon = 0.2  # デフォルト値
 
     
+    def _prepare_inputs(self, inputs):
+        """
+        分散トレーニング環境での入力テンソルの形状整合性を保証
+        """
+        # 親クラスの処理を最初に実行
+        inputs = super()._prepare_inputs(inputs)
+        
+        # アテンションマスクの形状チェックと修正
+        if "attention_mask" in inputs:
+            batch_size = inputs["input_ids"].size(0)
+            current_mask_size = inputs["attention_mask"].size(0)
+            
+            # 形状不一致の場合のみ処理
+            if current_mask_size != batch_size:
+                print(f"Adjusting attention_mask shape from {inputs['attention_mask'].shape} to match batch size {batch_size}")
+                inputs["attention_mask"] = inputs["attention_mask"][:batch_size]  # スライシングで調整
+        
+        # DeepSpeed/分散トレーニング用の追加処理
+        if self.is_deepspeed_enabled:
+            inputs = {k: v.to(self.accelerator.device) for k, v in inputs.items()}
+        
+        return inputs
+
 
     def _set_signature_columns_if_needed(self):
         # If `self.args.remove_unused_columns` is True, non-signature columns are removed.
@@ -796,7 +819,8 @@ class GRPOTrainer(Trainer):
         # Reinforce-Rej フィルタリング処理開始
         # ======================================================
         if self.args.reinforce_variant == "rej":
-            mode = "train" if self.model.training else "eval"  # 追加 
+
+            mode = "train" if self.model.training else "eval"  # 追加   
             current_rank = getattr(self.accelerator, 'local_process_index', 0)
             print(f"[Rank {current_rank}] Pre-filter rewards shape: {rewards.shape}, num_generations: {self.num_generations}")
 
