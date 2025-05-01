@@ -467,7 +467,6 @@ class GRPOTrainer(Trainer):
                 self.reward_funcs[i] = self.accelerator.prepare_model(reward_func, evaluation_mode=True)
 
 
-    
     def _init_raft_components(self):
         """RAFT用のコンポーネント初期化"""
         if self.config.policy_loss in ['vanilla', 'plusplus']:
@@ -482,6 +481,21 @@ class GRPOTrainer(Trainer):
                 self.config.clip_epsilon = 0.2  # デフォルト値
 
     
+    def _prepare_inputs(self, inputs):
+        inputs = super()._prepare_inputs(inputs)
+        
+        # 形状整合性チェック
+        batch_size = inputs["input_ids"].size(0)
+        if "attention_mask" in inputs:
+            if inputs["attention_mask"].size(0) != batch_size:
+                inputs["attention_mask"] = inputs["attention_mask"][:batch_size]
+        
+        # デバッグ用ログ
+        if torch.distributed.get_rank() == 0:
+            print(f"Shapes - input_ids: {inputs['input_ids'].shape}, attention_mask: {inputs['attention_mask'].shape}")
+        
+        return inputs
+
 
     def _set_signature_columns_if_needed(self):
         # If `self.args.remove_unused_columns` is True, non-signature columns are removed.
@@ -796,7 +810,8 @@ class GRPOTrainer(Trainer):
         # Reinforce-Rej フィルタリング処理開始
         # ======================================================
         if self.args.reinforce_variant == "rej":
-            mode = "train" if self.model.training else "eval"  # 追加 
+
+            mode = "train" if self.model.training else "eval"  # 追加   
             current_rank = getattr(self.accelerator, 'local_process_index', 0)
             print(f"[Rank {current_rank}] Pre-filter rewards shape: {rewards.shape}, num_generations: {self.num_generations}")
 
