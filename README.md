@@ -39,7 +39,7 @@ use configs.py, grpo_gsm_raft.py, grpo_trainer_gsm_raft.py
 * https://arxiv.org/abs/2504.11343
 * https://github.com/RLHFlow/Minimal-RL
 
-#### A Minimalist Approach to LLM Reasoning: from Rejection Sampling to Reinforce (reinfirce)
+#### A Minimalist Approach to LLM Reasoning: from Rejection Sampling to Reinforce (reinforce)
 * https://arxiv.org/abs/2504.11343
 * https://github.com/OpenRLHF/OpenRLHF
 
