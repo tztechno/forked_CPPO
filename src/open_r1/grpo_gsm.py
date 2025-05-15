@@ -13,6 +13,8 @@
 # limitations under the License.
 
 # keep L.267-268 for gsm data
+## L.172 for make trainable
+## L.201 バッグモードが有効かチェック
 
 import logging
 import os
@@ -169,6 +171,12 @@ class GRPOScriptArguments(ScriptArguments):
             "choices": ["python", "javascript", "r", "java", "bash"],
         },
     )
+    ##----------------make trainable
+    debug_gradients: bool = field(
+        default=False,
+        metadata={"help": "Enable gradient debugging output"}
+    )
+    ##---------------
 
 
 def main(script_args, training_args, model_args):
@@ -189,6 +197,12 @@ def main(script_args, training_args, model_args):
         log_level = logging.INFO
     else:
         log_level = logging.ERROR
+
+
+    ### デバッグモードが有効かチェック
+    if script_args.debug_gradients:
+        logger.info("Gradient debugging enabled")
+    ###---------------
 
     logger.setLevel(log_level)
     datasets.utils.logging.set_verbosity(log_level)
